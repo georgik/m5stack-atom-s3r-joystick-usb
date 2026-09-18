@@ -3,8 +3,10 @@
  * @brief Raylib port of the AtomS3 USB Joystick firmware.
  *
  * Architecture:
- * - Display stack (SPI ST7789 on SPI3_HOST) is preserved verbatim from the
- *   board BSP / esp_lcd example; rcore drives the framebuffer.
+ * - Display stack (GC9107 on SPI3_HOST) is driven directly via esp_lcd; rcore
+ *   drives the framebuffer. The AtomS3R panel is a GC9107 (register-compatible
+ *   with GC9A01) — the ST7789 driver sends Sitronix init commands the GC9107
+ *   ignores, so we drive it with esp_lcd_gc9a01.
  * - The Raylib loop below drives the application state machine. Each frame it
  *   samples the I2C StampFly joystick + GPIO buttons, advances the active
  *   state, and draws the screen between BeginDrawing()/EndDrawing().
@@ -13,6 +15,10 @@
  *
  * Flow mirrors the reference gpio-keyboard.c app_main:
  *   profile menu -> [Mass Storage | Snake Game | BLE | USB HID]
+ *
+ * The display initialization / flush carries the validated fixes from the
+ * mipidsi port (timing, MADTL 0x48, INVON, 130x129 framebuffer, no COG
+ * offset). See wiki/display.md.
  */
 
 #include "esp_log.h"
@@ -21,7 +27,7 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
-#include "esp_lcd_panel_st7789.h"
+#include "esp_lcd_gc9a01.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
@@ -47,11 +53,24 @@ static const char *TAG = "M5STACK_ATOMS3R";
 static esp_lcd_panel_handle_t g_panel = NULL;
 static esp_lcd_panel_io_handle_t g_io = NULL;
 
-// Chunk size: 48 lines (matches BSP max_transfer_sz)
+// Flush in chunks this tall so each chunk fits in a contiguous DMA buffer on
+// the S3 (a full 130x129 framebuffer is too large to allocate at once).
 #define CHUNK_LINES 48
 
 /**
- * @brief Display flush callback for rcore - chunks framebuffer
+ * @brief Display flush callback for rcore
+ *
+ * raylib's SwapScreenBuffer vertically flips the framebuffer, so buf[i]
+ * holds the natural-image row (h-1-i). We rebuild a natural-order DMA
+ * buffer (row 0 = top of the scene) so the GC9107 writes it in order.
+ * RGB565 is byte-swapped per pixel (__builtin_bswap16): little-endian
+ * ESP32 -> big-endian SPI, matching mipidsi.
+ *
+ * The panel is physically 128x128 but we report 130x129 to raylib (see
+ * display_get_dimensions()) and draw the window (x,y)-(x+w,y+h) with NO COG
+ * offset. The +2px width covers the panel's spare right-edge pixels and the
+ * +1px height removes the "unused pixels at the bottom" / alignment artifact.
+ * See wiki/display.md §6.4 / §6.5.
  */
 static void display_flush(const uint16_t *buf, uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 {
@@ -59,44 +78,49 @@ static void display_flush(const uint16_t *buf, uint16_t x, uint16_t y, uint16_t 
         return;
     }
 
-    // Flush in chunks (48 lines max) to match BSP max_transfer_sz
+    // Draw the whole framebuffer naturally (top-first), in chunks small enough
+    // to allocate as contiguous DMA buffers on the S3. raylib's framebuffer is
+    // vertically flipped, so output row p reads source row (h-1-p) and is
+    // byte-swapped (little-endian ESP32 -> big-endian SPI), matching mipidsi.
     for (uint16_t row = 0; row < h; row += CHUNK_LINES) {
         uint16_t chunk_height = (row + CHUNK_LINES > h) ? (h - row) : CHUNK_LINES;
-        const uint16_t *chunk_pixels = buf + (row * w);
-
-        // Swap bytes for RGB565 (little-endian ESP32 to big-endian SPI LCD)
-        // Allocate temporary buffer for swapped bytes
-        uint16_t *swapped_buf = heap_caps_malloc(chunk_height * w * sizeof(uint16_t), MALLOC_CAP_DMA);
-        if (!swapped_buf) {
-            ESP_LOGE(TAG, "Failed to allocate swap buffer");
+        uint16_t *chunk = heap_caps_malloc((uint32_t)chunk_height * w * sizeof(uint16_t),
+                                           MALLOC_CAP_DMA);
+        if (!chunk) {
+            ESP_LOGE(TAG, "Failed to allocate DMA flush buffer");
             return;
         }
-        for (int i = 0; i < chunk_height * w; i++) {
-            swapped_buf[i] = __builtin_bswap16(chunk_pixels[i]);
+
+        for (uint16_t inner = 0; inner < chunk_height; inner++) {
+            uint16_t src_row = (uint16_t)(h - 1 - (row + inner));
+            const uint16_t *sp = buf + ((uint32_t)src_row * w);
+            uint16_t *dp = chunk + ((uint32_t)inner * w);
+            for (uint16_t c = 0; c < w; c++) {
+                dp[c] = __builtin_bswap16(sp[c]);   // little-endian ESP32 -> big-endian SPI LCD
+            }
         }
 
-        esp_err_t ret = esp_lcd_panel_draw_bitmap(
-            g_panel,
-            x, y + row, x + w, y + row + chunk_height,
-            swapped_buf
-        );
-        heap_caps_free(swapped_buf);
-
+        // No COG offset: window starts at the physical row (wiki/display.md §6.4).
+        esp_err_t ret = esp_lcd_panel_draw_bitmap(g_panel, x, y + row, x + w,
+                                                   y + row + chunk_height, chunk);
+        heap_caps_free(chunk);
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to draw bitmap chunk at row %d: %s", row, esp_err_to_name(ret));
+            ESP_LOGE(TAG, "Failed to draw bitmap at row %d: %s", row, esp_err_to_name(ret));
             return;
         }
     }
 }
 
 /**
- * @brief Get display dimensions callback
- * Source: esp-bsp/bsp/<board>/<board>.json -> BSP_LCD_H_RES, BSP_LCD_V_RES
+ * @brief Get display dimensions callback.
+ *
+ * The panel is physically 128x128; we report 130x129 so the flush can draw a
+ * framebuffer 2px wider / 1px taller than the panel (wiki/display.md §6.4).
  */
 static void display_get_dimensions(uint16_t *w, uint16_t *h)
 {
-    if (w) *w = 128;
-    if (h) *h = 128;
+    if (w) *w = 130;
+    if (h) *h = 129;
 }
 
 // External rcore callback
@@ -108,15 +132,19 @@ extern void raylib_esp_set_display_callbacks(
 #define RAYLIB_TASK_STACK_SIZE (128 * 1024)
 
 /**
- * @brief Initialize display using BSP (or direct esp_lcd for esp32_s3_box)
+ * @brief Initialize the GC9107 display (SPI3_HOST) + LP5562 backlight.
+ *
+ * Timing / settings mirror the working Rust mipidsi firmware (see
+ * wiki/display.md §6.2 / §6.4.1): 500ms power-on settle BEFORE reset, 200ms
+ * AFTER reset, MADTL 0x48 (mirror(true,false)), INVON colour.
  */
 static esp_err_t init_display(void)
 {
     ESP_LOGI(TAG, "Initializing display...");
 
-    // M5Stack AtomS3R display driver changed from GC9107 to ST7735 (2026-05-14)
-    // ST7735 not in ESP-IDF, using ST7789 (similar Sitronix chip)
-    // Pinout from M5Stack AtomS3R hardware docs
+    // AtomS3R display is a GC9107 (register-compatible with GC9A01). The ST7789
+    // driver sends Sitronix init commands the GC9107 ignores, so we use
+    // esp_lcd_gc9a01. Pinout from M5Stack AtomS3R hardware docs.
     #define M5STACK_ATOM_S3R_LCD_MOSI      GPIO_NUM_21
     #define M5STACK_ATOM_S3R_LCD_SCLK      GPIO_NUM_15
     #define M5STACK_ATOM_S3R_LCD_CS        GPIO_NUM_14
@@ -151,18 +179,36 @@ static esp_err_t init_display(void)
     // Create panel IO (ESP-IDF 6 API - uses SPI3_HOST directly)
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi(SPI3_HOST, &io_cfg, &g_io));
 
-    // ST7789 panel configuration (ESP-IDF 6 API)
+    // GC9107 panel configuration
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = M5STACK_ATOM_S3R_LCD_RST,
         .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
         .bits_per_pixel = 16,
     };
 
-    // Initialize ST7789 panel
-    ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(g_io, &panel_cfg, &g_panel));
+    // Initialize GC9107 panel via the GC9A01 driver
+    ESP_ERROR_CHECK(esp_lcd_new_panel_gc9a01(g_io, &panel_cfg, &g_panel));
+
+    // Fix: 500ms power-on settle BEFORE reset/init (mipidsi behaviour).
+    // Without this, MADTL/init commands get lost -> split / low-res display.
+    vTaskDelay(pdMS_TO_TICKS(500));
+
     ESP_ERROR_CHECK(esp_lcd_panel_reset(g_panel));
+
+    // Fix: 200ms settle AFTER reset, BEFORE init command seq.
+    // Sending init commands too soon after reset drops them -> bad resolution.
+    vTaskDelay(pdMS_TO_TICKS(200));
+
     ESP_ERROR_CHECK(esp_lcd_panel_init(g_panel));
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(g_panel, true, true));
+
+    // MADTL 0x48: this board's GC9107 is hardware horizontally mirrored, so the
+    // MX column-flip bit is required to produce a non-mirrored image.
+    // (The MY bit tried earlier only flips rows and did not fix the mirror.)
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(g_panel, true, false));
+
+    // INVON colour: the panel boots inverted and the GC9107 vendor table
+    // reinforces it, so INVOFF cannot clear it — use INVON (wiki/display.md §6.6).
+    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(g_panel, true));
 
     // Turn on display
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(g_panel, true));

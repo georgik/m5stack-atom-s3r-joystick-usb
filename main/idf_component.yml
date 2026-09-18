@@ -4,3 +4,4 @@ dependencies:
   espressif/esp_tinyusb: ^2.0.1
   idf:
     version: '>=5.5.0'
+  espressif/esp_lcd_gc9a01: '*'
