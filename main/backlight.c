@@ -49,7 +49,21 @@ esp_err_t backlight_init(void)
 {
     esp_err_t ret;
 
+    /*
+     * The AtomS3R has two physically separate I2C buses:
+     *   - the SYS bus (GPIO0 / GPIO45) carrying the LP5562 backlight driver and
+     *     the BMI270 IMU, and
+     *   - the C-Port / expansion bus (GPIO38 / GPIO39) carrying the StampFly
+     *     joystick unit.
+     *
+     * ESP-IDF's i2c_master driver maps an unset `.i2c_port` to port 0, so the
+     * joystick bus (i2c_joystick_init, assigned below) and this bus would both
+     * try to grab I2C port 0 and the second acquire would fail with
+     * "I2C bus id(0) has already been acquired". We therefore pin each bus to
+     * its own peripheral (SOC_I2C_NUM == 2 on the ESP32-S3).
+     */
     i2c_master_bus_config_t bus_cfg = {
+        .i2c_port = 0,                 /* SYS I2C peripheral */
         .scl_io_num = LP5562_SCL_GPIO,
         .sda_io_num = LP5562_SDA_GPIO,
         .clk_source = I2C_CLK_SRC_DEFAULT,

@@ -1,8 +1,7 @@
 /*
  * Snake Game for AtomS3 USB Joystick
  *
- * Classic snake game implementation for joystick testing.
- * Converted from LVGL to Raylib.
+ * Classic snake game implementation for joystick testing, written in Raylib.
  */
 
 #ifndef SNAKE_GAME_H

@@ -13,8 +13,17 @@ static const char *TAG = "i2c_joystick";
 esp_err_t i2c_joystick_init(i2c_joystick_handle_t *stick) {
     esp_err_t ret;
 
-    // I2C bus configuration
+    /*
+     * The AtomS3R carries the StampFly joystick on the C-Port / expansion I2C
+     * bus (GPIO38 / GPIO39), which is a DIFFERENT peripheral from the SYS bus
+     * that drives the LP5562 backlight (see backlight_init).
+     *
+     * ESP-IDF's i2c_master driver maps an unset `.i2c_port` to port 0, which the
+     * backlight bus already occupies. Pin this bus to port 1 so the two I2C
+     * buses do not collide ("I2C bus id(0) has already been acquired").
+     */
     i2c_master_bus_config_t bus_config = {
+        .i2c_port = 1,                 /* C-Port I2C peripheral */
         .scl_io_num = I2C_SCL_GPIO,
         .sda_io_num = I2C_SDA_GPIO,
         .clk_source = I2C_CLK_SRC_DEFAULT,

@@ -1,9 +1,9 @@
 /*
  * Profile Selection Menu for AtomS3 USB Joystick
  *
- * Conversion of the original LVGL menu (profile_menu.c) to Raylib draw calls.
- * profile_menu_render() is called each frame from the raylib_task frame;
- * profile_menu_show() only initialises state (load profiles, reset index).
+ * Raylib draw-call implementation of the profile menu. profile_menu_render() is
+ * called each frame from the raylib_task frame; profile_menu_show() only
+ * initialises state (load profiles, reset index).
  */
 
 #include "profile_menu.h"

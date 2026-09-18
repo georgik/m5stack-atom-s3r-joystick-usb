@@ -1,9 +1,9 @@
 /*
  * Raylib UI for AtomS3 USB Joystick
  *
- * Conversion of the original LVGL UI (ui_lvgl.c) to Raylib draw calls.
- * All drawing is performed inside the raylib_task frame between
- * BeginDrawing()/EndDrawing(); the window is 128x128.
+ * Raylib draw-call implementation of the UI. All drawing is performed inside
+ * the raylib_task frame between BeginDrawing()/EndDrawing(); the window is
+ * 128x128.
  */
 
 #ifndef UI_H

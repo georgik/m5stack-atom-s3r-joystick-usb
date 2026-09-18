@@ -1,9 +1,9 @@
 /*
  * Snake Game for AtomS3 USB Joystick
  *
- * Conversion of the original LVGL snake game (snake_game.c) to Raylib draw
- * calls. Snake_game_render() is called each frame from the raylib_task frame.
- * Snake_game_start() only sets up state; it does not draw (no active frame).
+ * Raylib draw-call implementation of the snake game. Snake_game_render() is
+ * called each frame from the raylib_task frame. Snake_game_start() only sets up
+ * state; it does not draw (no active frame).
  */
 
 #include "snake_game.h"

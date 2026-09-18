@@ -1,7 +1,7 @@
 /*
  * Raylib UI for AtomS3 USB Joystick
  *
- * Conversion of the original LVGL UI (ui_lvgl.c) to Raylib draw calls.
+ * Raylib draw-call implementation of the UI.
  *
  * IMPORTANT: these functions only issue Raylib draw commands. They must be
  * called from inside the raylib_task frame (between BeginDrawing()/EndDrawing()).
@@ -27,7 +27,6 @@ void ui_reset_uptime(void)
 void ui_show_press_to_start(void)
 {
     const int w = GetScreenWidth();
-    const int h = GetScreenHeight();
     const int fs = 10;
 
     const char *title = "Press to Start";
