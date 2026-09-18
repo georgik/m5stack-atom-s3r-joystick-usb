@@ -63,6 +63,21 @@ white-channel PWM value so the panel lights.
 | Joystick SDA | GPIO38 |
 | Select button | GPIO41 (active low) |
 
+### I2C buses
+
+The AtomS3R uses **two separate I2C peripherals**, each driven by its own driver:
+
+| Bus | I2C port | GPIO | Devices |
+| --------- | --------- | --------- | --------- |
+| SYS | 0 | GPIO0 (SCL), GPIO45 (SDA) | LP5562 backlight (0x30), BMI270 IMU (0x68) |
+| C-Port | 1 | GPIO39 (SCL), GPIO38 (SDA) | StampFly joystick (0x59) |
+
+Each driver pins its bus to a distinct `.i2c_port` (`backlight.c` → port 0,
+`i2c_joystick.c` → port 1). ESP-IDF's `i2c_master` driver maps an unset port to
+port 0, so if both buses left it unspecified the second `i2c_new_master_bus()`
+would fail with *"I2C bus id(0) has already been acquired"*. The ESP32-S3 provides
+two I2C peripherals (`SOC_I2C_NUM == 2`), so the two buses never collide.
+
 ## Profiles
 
 Profiles are read from storage at startup. If storage is empty or unreadable the
