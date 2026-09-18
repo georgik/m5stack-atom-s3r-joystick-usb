@@ -53,10 +53,6 @@ static const char *TAG = "M5STACK_ATOMS3R";
 static esp_lcd_panel_handle_t g_panel = NULL;
 static esp_lcd_panel_io_handle_t g_io = NULL;
 
-// Flush in chunks this tall so each chunk fits in a contiguous DMA buffer on
-// the S3 (a full 130x129 framebuffer is too large to allocate at once).
-#define CHUNK_LINES 48
-
 /**
  * @brief Display flush callback for rcore
  *
@@ -78,36 +74,40 @@ static void display_flush(const uint16_t *buf, uint16_t x, uint16_t y, uint16_t 
         return;
     }
 
-    // Draw the whole framebuffer naturally (top-first), in chunks small enough
-    // to allocate as contiguous DMA buffers on the S3. raylib's framebuffer is
-    // vertically flipped, so output row p reads source row (h-1-p) and is
-    // byte-swapped (little-endian ESP32 -> big-endian SPI), matching mipidsi.
-    for (uint16_t row = 0; row < h; row += CHUNK_LINES) {
-        uint16_t chunk_height = (row + CHUNK_LINES > h) ? (h - row) : CHUNK_LINES;
-        uint16_t *chunk = heap_caps_malloc((uint32_t)chunk_height * w * sizeof(uint16_t),
-                                           MALLOC_CAP_DMA);
-        if (!chunk) {
-            ESP_LOGE(TAG, "Failed to allocate DMA flush buffer");
-            return;
-        }
+    // Draw the whole framebuffer naturally (top-first), in one call, exactly as
+    // the validated reference firmware does. Splitting it into per-chunk
+    // draw_bitmap calls made the GC9107 re-set RASET and wrap/repeat in the
+    // lower third, because the last chunk's window end (y+129) exceeds the
+    // 128-row panel. A single full-frame draw avoids that.
+    //
+    // A full 130x129 framebuffer (~33 KB) may not fit in contiguous DMA SRAM, so
+    // try DMA first and fall back to plain SRAM (SPI DMA can read either).
+    const size_t size = (size_t)h * w * sizeof(uint16_t);
+    uint16_t *fb = heap_caps_malloc(size, MALLOC_CAP_DMA);
+    if (!fb) {
+        fb = malloc(size);   // plain SRAM fallback: SPI DMA can read it
+    }
+    if (!fb) {
+        ESP_LOGE(TAG, "Failed to allocate DMA flush buffer");
+        return;
+    }
 
-        for (uint16_t inner = 0; inner < chunk_height; inner++) {
-            uint16_t src_row = (uint16_t)(h - 1 - (row + inner));
-            const uint16_t *sp = buf + ((uint32_t)src_row * w);
-            uint16_t *dp = chunk + ((uint32_t)inner * w);
-            for (uint16_t c = 0; c < w; c++) {
-                dp[c] = __builtin_bswap16(sp[c]);   // little-endian ESP32 -> big-endian SPI LCD
-            }
+    // Rebuild a natural-order framebuffer: undo raylib's vertical flip so that
+    // fb[r] is the r-th row of the drawn scene (r = 0 is the top).
+    for (uint16_t r = 0; r < h; r++) {
+        uint16_t src_row = (uint16_t)(h - 1 - r);
+        const uint16_t *sp = buf + ((uint32_t)src_row * w);
+        uint16_t *dp = fb + ((uint32_t)r * w);
+        for (uint16_t c = 0; c < w; c++) {
+            dp[c] = __builtin_bswap16(sp[c]);   // little-endian ESP32 -> big-endian SPI LCD
         }
+    }
 
-        // No COG offset: window starts at the physical row (wiki/display.md §6.4).
-        esp_err_t ret = esp_lcd_panel_draw_bitmap(g_panel, x, y + row, x + w,
-                                                   y + row + chunk_height, chunk);
-        heap_caps_free(chunk);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to draw bitmap at row %d: %s", row, esp_err_to_name(ret));
-            return;
-        }
+    // Draw the full framebuffer directly, with no COG offset (wiki/display.md §6.4).
+    esp_err_t ret = esp_lcd_panel_draw_bitmap(g_panel, x, y, x + w, y + h, fb);
+    heap_caps_free(fb);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to draw bitmap: %s", esp_err_to_name(ret));
     }
 }
 
