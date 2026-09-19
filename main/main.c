@@ -259,29 +259,16 @@ static bool any_button_pressed(const hid_input_state_t *s)
             s->btn_right_stick || s->gpio_pressed);
 }
 
-/* Detect a debounced GPIO41 "menu" button press. Returns true on release. */
-static bool s_menu_btn_pending = false;
-static uint32_t s_menu_btn_bounce_ms = 0;
-
-static bool menu_button_pressed(void)
+/*
+ * GPIO41 "menu" button. The ESP-IDF button driver debounces the press+release
+ * "single click" and surfaces it as a one-frame pulse in s->gpio_pressed
+ * (see gpio_input_read()). Return true while that pulse is present; the first
+ * handler to observe it consumes the claim, so returning to the profile menu
+ * does not re-latch the same press. GPIO41 is active-LOW.
+ */
+static bool menu_button_pressed(const hid_input_state_t *s)
 {
-    if (gpio_get_level(GPIO_NUM_41) == 0) {
-        uint32_t now = xTaskGetTickCount();
-        if (!s_menu_btn_pending) {
-            s_menu_btn_pending = true;
-            s_menu_btn_bounce_ms = now;
-        } else if ((now - s_menu_btn_bounce_ms) >= 50) {
-            // Debounced press: wait for release, then report it.
-            while (gpio_get_level(GPIO_NUM_41) == 0) {
-                vTaskDelay(pdMS_TO_TICKS(10));
-            }
-            s_menu_btn_pending = false;
-            return true;
-        }
-    } else {
-        s_menu_btn_pending = false;
-    }
-    return false;
+    return s->gpio_pressed;
 }
 
 /* Choose the next state from the selected profile (no side effects). */
@@ -324,16 +311,38 @@ static bool mode_entry_wait(bool *wait, uint32_t *wait_ms, const hid_input_state
 static void handle_menu(const hid_input_state_t *s, app_state_t *state,
                         const profile_info_t **profile)
 {
+    // One-shot entry guard. Armed whenever we (re)enter the menu so the first
+    // frames after returning from a mode are protected against a held button
+    // re-latching as a fresh selection.
+    static bool s_menu_entry_done = false;
+    static bool s_menu_entry_wait = false;
+    static uint32_t s_menu_entry_ms = 0;
+
     // Activate the menu on first entry (profiles + state). Until this runs
     // profile_menu_render() early-returns (s_menu_active == false), so nothing
     // is drawn.
     if (!profile_menu_is_active()) {
         profile_menu_show();
+        // (Re)arm the entry guard for this menu visit.
+        s_menu_entry_done = false;
+        s_menu_entry_wait = false;
     }
 
     if (profile_menu_is_active()) {
         bool joy1_up = (s->joy1_y < JOYSTICK_THRESHOLD_LOW);
         bool joy1_down = (s->joy1_y > JOYSTICK_THRESHOLD_HIGH);
+
+        // Entry-wait guard: on the first frames after returning from a mode a
+        // button may still be held (e.g. btn_right used to leave the game, or
+        // the GPIO41 screen button). Wait until it is released so the menu does
+        // not treat that press as a fresh selection. One-shot: once cleared,
+        // fresh presses made inside the menu are acted on immediately.
+        if (!s_menu_entry_done && mode_entry_wait(&s_menu_entry_wait, &s_menu_entry_ms, s)) {
+            profile_menu_render();
+            return;
+        }
+        s_menu_entry_done = true;
+
         bool button_pressed = any_button_pressed(s);
 
         if (profile_menu_handle_input(joy1_up, joy1_down, button_pressed)) {
@@ -352,6 +361,7 @@ static void handle_usb_hid(const hid_input_state_t *s, app_state_t *state,
                            const profile_info_t *profile)
 {
     static bool s_setup = false;
+    static bool s_entry_done = false;
     static bool s_entry_wait = false;
     static uint32_t s_entry_ms = 0;
 
@@ -365,17 +375,22 @@ static void handle_usb_hid(const hid_input_state_t *s, app_state_t *state,
         }
         ui_reset_uptime();
         s_setup = true;
+        s_entry_done = false;
     }
 
-    if (mode_entry_wait(&s_entry_wait, &s_entry_ms, s)) {
+    // Entry-wait guard: only honored on the first frames after start, to let a
+    // button held from the menu selection settle. Once cleared it stays cleared,
+    // so button presses during operation reach the handlers below.
+    if (!s_entry_done && mode_entry_wait(&s_entry_wait, &s_entry_ms, s)) {
         // Draw while a button is still held after selection.
         ui_show_usb_active(profile ? profile->name : "Gamepad");
         return;
     }
+    s_entry_done = true;
 
     ui_show_usb_active(profile ? profile->name : "Gamepad");
 
-    if (menu_button_pressed()) {
+    if (menu_button_pressed(s)) {
         ESP_LOGI(TAG, "Menu button pressed - restarting");
         esp_restart();
     }
@@ -406,6 +421,7 @@ static void handle_ble_hid(const hid_input_state_t *s, app_state_t *state,
     static bool s_init = false;
     static bool s_connected = false;
     static uint32_t s_send_ready_ms = 0;
+    static bool s_entry_done = false;
     static bool s_entry_wait = false;
     static uint32_t s_entry_ms = 0;
 
@@ -417,12 +433,17 @@ static void handle_ble_hid(const hid_input_state_t *s, app_state_t *state,
         }
         ui_reset_uptime();
         s_init = true;
+        s_entry_done = false;
     }
 
-    if (mode_entry_wait(&s_entry_wait, &s_entry_ms, s)) {
+    // Entry-wait guard: only honored on the first frames after start, to let a
+    // button held from the menu selection settle. Once cleared it stays cleared,
+    // so button presses during operation reach the handlers below.
+    if (!s_entry_done && mode_entry_wait(&s_entry_wait, &s_entry_ms, s)) {
         ui_show_usb_active(profile ? profile->name : "BLE HID");
         return;
     }
+    s_entry_done = true;
 
     bool is_connected = ble_hid_is_connected();
     if (is_connected && !s_connected) {
@@ -434,7 +455,7 @@ static void handle_ble_hid(const hid_input_state_t *s, app_state_t *state,
 
     ui_show_usb_active(profile ? profile->name : "BLE HID");
 
-    if (menu_button_pressed()) {
+    if (menu_button_pressed(s)) {
         ble_hid_deinit();
         ESP_LOGI(TAG, "Menu button pressed - restarting");
         esp_restart();
@@ -448,6 +469,7 @@ static void handle_ble_hid(const hid_input_state_t *s, app_state_t *state,
 static void handle_msc(const hid_input_state_t *s, app_state_t *state)
 {
     static bool s_started = false;
+    static bool s_entry_done = false;
     static bool s_entry_wait = false;
     static uint32_t s_entry_ms = 0;
 
@@ -461,16 +483,21 @@ static void handle_msc(const hid_input_state_t *s, app_state_t *state)
             ESP_LOGE(TAG, "MSC start failed");
         }
         s_started = true;
+        s_entry_done = false;
     }
 
-    if (mode_entry_wait(&s_entry_wait, &s_entry_ms, s)) {
+    // Entry-wait guard: only honored on the first frames after start, to let a
+    // button held from the menu selection settle. Once cleared it stays cleared,
+    // so button presses during operation reach the handlers below.
+    if (!s_entry_done && mode_entry_wait(&s_entry_wait, &s_entry_ms, s)) {
         ui_show_usb_active("Mass Storage");
         return;
     }
+    s_entry_done = true;
 
     ui_show_usb_active("Mass Storage");
 
-    if (menu_button_pressed()) {
+    if (menu_button_pressed(s)) {
         msc_storage_stop_usb_mode();
         ESP_LOGI(TAG, "Menu button pressed - restarting");
         esp_restart();
@@ -487,22 +514,40 @@ static void handle_msc(const hid_input_state_t *s, app_state_t *state)
 static void handle_snake(const hid_input_state_t *s, app_state_t *state)
 {
     static bool s_started = false;
+    static bool s_entry_done = false;
     static bool s_entry_wait = false;
     static uint32_t s_entry_ms = 0;
+
+    // Edge-detected "return to menu" for the face buttons handled here (a held
+    // button triggers exactly once). btn_left is passed to snake_game_handle_input()
+    // as button_b below.
+    static bool s_btn_right_last = false;
+    static bool s_btn_rstick_last = false;
+    bool ret_to_menu = (s->btn_right && !s_btn_right_last)
+                    || (s->btn_right_stick && !s_btn_rstick_last);
+    s_btn_right_last = s->btn_right;
+    s_btn_rstick_last = s->btn_right_stick;
 
     if (!s_started) {
         snake_game_start();
         s_started = true;
+        s_entry_done = false;
     }
 
-    if (mode_entry_wait(&s_entry_wait, &s_entry_ms, s)) {
+    // Entry-wait guard: only honored on the first frames after start, to let a
+    // button held from the menu selection settle. Once cleared it stays cleared,
+    // so button presses during play reach the game input handler below.
+    if (!s_entry_done && mode_entry_wait(&s_entry_wait, &s_entry_ms, s)) {
         snake_game_render();
         return;
     }
+    s_entry_done = true;
 
-    // Menu button (GPIO41) returns to the profile menu, like the other modes.
-    if (menu_button_pressed()) {
-        ESP_LOGI(TAG, "Menu button pressed - returning to profile menu");
+    // Leave the game and return to the profile menu from the GPIO41 screen
+    // button or btn_right / btn_right_stick, in every state (playing or game
+    // over). btn_left is passed through to snake_game_handle_input() as button_b.
+    if (ret_to_menu || menu_button_pressed(s)) {
+        ESP_LOGI(TAG, "Return button pressed - returning to profile menu");
         *state = APP_STATE_MENU;
         s_started = false;
         return;
@@ -512,12 +557,8 @@ static void handle_snake(const hid_input_state_t *s, app_state_t *state)
     bool joy1_down = (s->joy1_y > 3000);
     bool joy1_left = (s->joy1_x < 1000);
     bool joy1_right = (s->joy1_x > 3000);
-    // button_a is the joystick click (left stick button): restart on game over,
-    // pause/resume while playing. button_b is the I2C LEFT face button: an
-    // alternative way to leave the game. (GPIO41 is handled separately by
-    // menu_button_pressed() above, so it never reaches here.)
-    bool button_a = s->btn_left_stick;
-    bool button_b = s->btn_left;
+    bool button_a = s->btn_left_stick;   // joystick click: restart / return-to-menu
+    bool button_b = s->btn_left;         // face button: return-to-menu
 
     bool exit_game = snake_game_handle_input(joy1_up, joy1_down, joy1_left, joy1_right,
                                              button_a, button_b);

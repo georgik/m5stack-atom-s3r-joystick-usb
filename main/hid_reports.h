@@ -35,7 +35,7 @@ typedef struct {
     bool btn_right;           // I2C 0x71  -> Face button right
     bool btn_left_stick;      // I2C 0x72  -> Left stick button
     bool btn_right_stick;     // I2C 0x73  -> Right stick button
-    bool gpio_pressed;        // GPIO41 built-in button (active LOW)
+    bool gpio_pressed;        // GPIO41 built-in button: one-frame "single click" pulse
     uint16_t joy1_x;          // Joy1 X axis raw
     uint16_t joy1_y;          // Joy1 Y axis raw
     uint16_t joy2_x;          // Joy2 X axis raw

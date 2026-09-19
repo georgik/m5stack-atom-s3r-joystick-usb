@@ -11,7 +11,7 @@ idf_component_register(SRCS "main.c"
                              "backlight.c"
                     INCLUDE_DIRS "."
                     REQUIRES georgik__raylib esp_driver_spi esp_lcd
-                             espressif__esp_lcd_gc9a01
+                             espressif__esp_lcd_gc9a01 espressif__button
                              esp_driver_gpio esp_driver_i2c
                              esp_tinyusb wear_levelling fatfs
                              bt esp_hid nvs_flash)

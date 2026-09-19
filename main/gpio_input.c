@@ -14,6 +14,8 @@
 #include "esp_log.h"
 #include "i2c_joystick.h"
 #include "driver/gpio.h"
+#include "iot_button.h"
+#include "button_gpio.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -25,6 +27,56 @@ static const char *TAG = "GPIO_INPUT";
 #define GPIO_MENU_NUM GPIO_NUM_41
 
 static i2c_joystick_handle_t s_stick;
+
+/*
+ * Software debounce for the four I2C joystick buttons. The StampFly chip
+ * exposes raw, un-debounced button levels, so the mechanical contacts' bounce
+ * on press/release can produce spurious edges. We require
+ * BUTTON_DEBOUNCE_NEED consecutive identical reads before flipping the
+ * reported state. This mirrors the ESP-IDF button driver's debounce that gates
+ * the GPIO41 "menu" button below.
+ */
+#define BUTTON_DEBOUNCE_NEED 3
+
+typedef struct {
+    bool    stable;   // last reported (confirmed) button state
+    uint8_t count;    // consecutive reads of the current level
+} button_debouncer_t;
+
+static button_debouncer_t s_btn_debounce[4];
+
+static bool debounce_button(button_debouncer_t *b, bool raw)
+{
+    if (raw == b->stable) {
+        if (b->count < 255) {
+            b->count++;
+        }
+    } else {
+        b->count = 1;
+    }
+    if (b->count >= BUTTON_DEBOUNCE_NEED) {
+        b->stable = raw;
+    }
+    return b->stable;
+}
+
+/*
+ * Debounced "menu" button (GPIO41). The ESP-IDF button driver reports a clean
+ * press+release as a single click here; the main task then delivers it as a
+ * one-frame pulse in hid_input_state_t::gpio_pressed.
+ */
+static button_handle_t s_menu_btn = NULL;
+static volatile bool s_menu_btn_claim = false;
+static portMUX_TYPE s_input_lock = SPINLOCK_INITIALIZER;
+
+static void menu_button_cb(void *handle, void *usr)
+{
+    (void)handle;
+    (void)usr;
+    if (iot_button_get_event(handle) == BUTTON_SINGLE_CLICK) {
+        s_menu_btn_claim = true;
+    }
+}
 
 void gpio_input_init(void)
 {
@@ -38,15 +90,24 @@ void gpio_input_init(void)
     }
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    // GPIO41 built-in button: input with pull-up, active LOW.
-    gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << GPIO_MENU_NUM),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_ANYEDGE,
+    // Built-in GPIO41 button: debounced by the ESP-IDF button driver. A clean
+    // press+release ("single click") is surfaced via s_menu_btn_claim and
+    // delivered as s->gpio_pressed in gpio_input_read(). This replaces the old
+    // raw-level read + software debounce, so the profile menu no longer latches
+    // the press-and-release that returned us here.
+    const button_config_t btn_cfg = {
+        .short_press_time = 20,   // ms debounce per edge
     };
-    ESP_ERROR_CHECK(gpio_config(&io_conf));
+    const button_gpio_config_t btn_gpio_cfg = {
+        .gpio_num = GPIO_MENU_NUM,
+        .active_level = 0,        // active LOW
+    };
+    ret = iot_button_new_gpio_device(&btn_cfg, &btn_gpio_cfg, &s_menu_btn);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create GPIO41 button: %s", esp_err_to_name(ret));
+    } else {
+        iot_button_register_cb(s_menu_btn, BUTTON_SINGLE_CLICK, NULL, menu_button_cb, NULL);
+    }
 
     // Read a baseline so axes read neutral even if the first probe failed.
     hid_input_state_t baseline;
@@ -91,6 +152,26 @@ void gpio_input_read(hid_input_state_t *s)
         }
     }
 
-    // GPIO41 built-in button is active LOW.
-    s->gpio_pressed = (gpio_get_level(GPIO_MENU_NUM) == 0);
+    // Software-debounce the four I2C joystick buttons so contact bounce on
+    // press/release does not produce spurious events. This mirrors the
+    // ESP-IDF button driver's debounce that gates the GPIO41 "menu" button.
+    s->btn_left        = debounce_button(&s_btn_debounce[BUTTON_LEFT],        s->btn_left);
+    s->btn_right       = debounce_button(&s_btn_debounce[BUTTON_RIGHT],       s->btn_right);
+    s->btn_left_stick  = debounce_button(&s_btn_debounce[BUTTON_LEFT_STICK],  s->btn_left_stick);
+    s->btn_right_stick = debounce_button(&s_btn_debounce[BUTTON_RIGHT_STICK], s->btn_right_stick);
+
+    // GPIO41 built-in button: deliver a single debounced "click" (press+release)
+    // as a one-frame pulse via s->gpio_pressed. The first reader consumes it
+    // (claim model), so returning to the profile menu does not re-latch the
+    // press that triggered the return.
+    if (s_menu_btn != NULL) {
+        portENTER_CRITICAL(&s_input_lock);
+        s->gpio_pressed = s_menu_btn_claim;
+        s_menu_btn_claim = false;
+        portEXIT_CRITICAL(&s_input_lock);
+    } else {
+        // Fallback: raw level (no debounce). The button driver is a required
+        // dependency, so this should not happen.
+        s->gpio_pressed = (gpio_get_level(GPIO_MENU_NUM) == 0);
+    }
 }

@@ -12,7 +12,7 @@ enters when it enumerates.
 
 ## Features
 
-- Profile-selection menu rendered on the 128x128 ST7789 display.
+- Profile-selection menu rendered on the 128x128 GC9107 display.
 - USB HID: gamepad, keyboard, and mouse reports (via libtinyusb).
 - BLE HID: gamepad, keyboard, and mouse over Bluetooth.
 - USB Mass Storage device.
@@ -27,8 +27,11 @@ is fixed by the board and is documented below.
 
 ### Display
 
-The module ships with a GC9107 panel, but the driver is ported against the ST7789
-SPI driver (a compatible Sitronix controller) available in ESP-IDF.
+The module ships with a GC9107 panel (a member of the GC91xx family, register-compatible
+with GC9A01). ESP-IDF ships no dedicated GC9107 driver, so we drive it with
+`esp_lcd_gc9a01`. The ST7789 driver must NOT be used here — it sends Sitronix init
+commands the GC9107 ignores, which produced the split/mirrored/inverted artifacts seen
+earlier.
 
 | Signal | GPIO |
 | --------- | --------- |
@@ -40,8 +43,11 @@ SPI driver (a compatible Sitronix controller) available in ESP-IDF.
 | RST | GPIO48 |
 | Resolution | 128x128, RGB ordered as BGR |
 
-The panel is reset, initialized, and flipped (both axes) to match the physical
-panel orientation, and the display backplane is enabled after initialization.
+The panel is reset, initialized, and column-flipped (`MX` bit → MADTL `0x48`) to match
+the physical panel orientation, the colour inversion is enabled (`INVON`), and the
+backlight is enabled after initialization. Init timing mirrors the reference mipidsi
+firmware (a settle delay before and after reset). See `wiki/display.md` for the full
+rationale.
 
 ### Backlight
 
@@ -102,8 +108,10 @@ selection is highlighted, and a bright bar follows the list as it scrolls.
   application state machine (`APP_STATE_MENU`, `APP_STATE_USB_HID`,
   `APP_STATE_BLE_HID`, `APP_STATE_MSC`, `APP_STATE_SNAKE`), and the raylib render
   loop.
-- `main/main.c` display section: ST7789 SPI initialization and the raylib flush
-  callback that chunks the framebuffer for the LCD transfer.
+- `main/main.c` display section: GC9107 SPI initialization and the raylib flush
+  callback, which rebuilds a natural-order framebuffer (undoing raylib's vertical
+  flip), byte-swaps RGB565, and draws the full 130x129 framebuffer directly with no
+  COG offset. See `wiki/display.md`.
 - `main/backlight.c`: LP5562 I2C backlight driver.
 - `main/i2c_joystick.c`: I2C joystick input driver.
 - `main/gpio_input.c`: GPIO button input sampling.

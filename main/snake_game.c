@@ -250,8 +250,8 @@ bool snake_game_handle_input(bool joy1_up, bool joy1_down, bool joy1_left, bool 
     }
 
     // Convert the raw button levels into single-frame rising edges so a held
-    // button triggers an action exactly once (a level would re-toggle / re-start
-    // every frame).
+    // button triggers an action exactly once (a level would re-trigger every
+    // frame).
     static bool btn_a_last = false;
     static bool btn_b_last = false;
     bool a_pressed = button_a && !btn_a_last;
@@ -259,27 +259,28 @@ bool snake_game_handle_input(bool joy1_up, bool joy1_down, bool joy1_left, bool 
     btn_a_last = button_a;
     btn_b_last = button_b;
 
-    // button_a (joystick click): restart on game over, otherwise pause/resume.
+    // button_a (joystick click): restart the game on game over; return to the
+    // profile menu while playing.
     if (a_pressed) {
         if (game_over) {
             ESP_LOGI(TAG, "Restarting game");
             snake_game_start();
             return false;
         }
-        game_paused = !game_paused;
-        ESP_LOGI(TAG, "Game %s", game_paused ? "paused" : "resumed");
-        return false;
+        ESP_LOGI(TAG, "Returning to menu via joystick click - Score: %d", score);
+        game_active = false;
+        return true; // Signal to exit game
     }
 
-    // button_b (I2C LEFT face button): exit the game back to the profile menu.
+    // button_b (I2C LEFT face button): return to the profile menu.
     if (b_pressed) {
-        ESP_LOGI(TAG, "Exiting Snake game - Score: %d", score);
+        ESP_LOGI(TAG, "Returning to menu via button - Score: %d", score);
         game_active = false;
         return true; // Signal to exit game
     }
 
     // Handle direction changes (prevent 180-degree turns)
-    if (!game_paused && !game_over) {
+    if (!game_over) {
         if (joy1_up && current_direction != DIR_DOWN) {
             next_direction = DIR_UP;
         } else if (joy1_down && current_direction != DIR_UP) {
