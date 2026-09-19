@@ -152,12 +152,18 @@ static void update_game(void)
             break;
     }
 
-    // Check wall collision
-    if (new_head.x < 0 || new_head.x >= GRID_SIZE ||
-        new_head.y < 0 || new_head.y >= GRID_SIZE) {
-        game_over = true;
-        ESP_LOGI(TAG, "Wall collision! Game over. Score: %d", score);
-        return;
+    // Wrap the head around the walls (no solid walls) so the snake continues on
+    // the opposite side. This keeps the game playable on the tiny 128x128 screen;
+    // the only way to lose is now to run into yourself.
+    if (new_head.x < 0) {
+        new_head.x = GRID_SIZE - 1;
+    } else if (new_head.x >= GRID_SIZE) {
+        new_head.x = 0;
+    }
+    if (new_head.y < 0) {
+        new_head.y = GRID_SIZE - 1;
+    } else if (new_head.y >= GRID_SIZE) {
+        new_head.y = 0;
     }
 
     // Check self collision
@@ -243,15 +249,30 @@ bool snake_game_handle_input(bool joy1_up, bool joy1_down, bool joy1_left, bool 
         return false;
     }
 
-    // Handle pause/resume
-    if (button_a && !game_over) {
+    // Convert the raw button levels into single-frame rising edges so a held
+    // button triggers an action exactly once (a level would re-toggle / re-start
+    // every frame).
+    static bool btn_a_last = false;
+    static bool btn_b_last = false;
+    bool a_pressed = button_a && !btn_a_last;
+    bool b_pressed = button_b && !btn_b_last;
+    btn_a_last = button_a;
+    btn_b_last = button_b;
+
+    // button_a (joystick click): restart on game over, otherwise pause/resume.
+    if (a_pressed) {
+        if (game_over) {
+            ESP_LOGI(TAG, "Restarting game");
+            snake_game_start();
+            return false;
+        }
         game_paused = !game_paused;
         ESP_LOGI(TAG, "Game %s", game_paused ? "paused" : "resumed");
         return false;
     }
 
-    // Exit game on button B
-    if (button_b) {
+    // button_b (I2C LEFT face button): exit the game back to the profile menu.
+    if (b_pressed) {
         ESP_LOGI(TAG, "Exiting Snake game - Score: %d", score);
         game_active = false;
         return true; // Signal to exit game
@@ -268,13 +289,6 @@ bool snake_game_handle_input(bool joy1_up, bool joy1_down, bool joy1_left, bool 
         } else if (joy1_right && current_direction != DIR_LEFT) {
             next_direction = DIR_RIGHT;
         }
-    }
-
-    // Restart on button A if game over
-    if (button_a && game_over) {
-        ESP_LOGI(TAG, "Restarting game");
-        snake_game_start();
-        return false;
     }
 
     return false; // Continue game

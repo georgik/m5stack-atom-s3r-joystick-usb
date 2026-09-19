@@ -512,8 +512,12 @@ static void handle_snake(const hid_input_state_t *s, app_state_t *state)
     bool joy1_down = (s->joy1_y > 3000);
     bool joy1_left = (s->joy1_x < 1000);
     bool joy1_right = (s->joy1_x > 3000);
-    bool button_a = s->gpio_pressed;  // GPIO41
-    bool button_b = s->btn_left;      // I2C LEFT
+    // button_a is the joystick click (left stick button): restart on game over,
+    // pause/resume while playing. button_b is the I2C LEFT face button: an
+    // alternative way to leave the game. (GPIO41 is handled separately by
+    // menu_button_pressed() above, so it never reaches here.)
+    bool button_a = s->btn_left_stick;
+    bool button_b = s->btn_left;
 
     bool exit_game = snake_game_handle_input(joy1_up, joy1_down, joy1_left, joy1_right,
                                              button_a, button_b);

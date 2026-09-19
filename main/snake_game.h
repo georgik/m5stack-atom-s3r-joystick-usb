@@ -42,8 +42,10 @@ bool snake_game_is_active(void);
  * @param joy1_down Joystick 1 down pressed
  * @param joy1_left Joystick 1 left pressed
  * @param joy1_right Joystick 1 right pressed
- * @param button_a Button A pressed
- * @param button_b Button B pressed
+ * @param button_a Joystick click (left stick button). Restart the game when it is
+ *                 game over; pause/resume while playing. A rising edge is detected,
+ *                 so a held button triggers exactly once.
+ * @param button_b I2C LEFT face button. Exits the game back to the profile menu.
  * @return true if game should exit, false to continue
  */
 bool snake_game_handle_input(bool joy1_up, bool joy1_down, bool joy1_left, bool joy1_right,
