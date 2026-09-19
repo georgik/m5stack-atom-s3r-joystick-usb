@@ -60,6 +60,16 @@ int snake_game_get_score(void);
  */
 void snake_game_update(void);
 
+/**
+ * @brief Set the snake move period in milliseconds.
+ *
+ * The snake advances every this-many milliseconds of real time, independent of
+ * the frame rate. Only values > 0 are accepted.
+ *
+ * @param ms Move interval in milliseconds
+ */
+void snake_game_set_move_interval_ms(int ms);
+
 #ifdef __cplusplus
 }
 #endif

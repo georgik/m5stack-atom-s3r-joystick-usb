@@ -306,11 +306,14 @@ static app_state_t app_state_for_profile(const profile_info_t *p)
 static bool mode_entry_wait(bool *wait, uint32_t *wait_ms, const hid_input_state_t *s)
 {
     if (!*wait) {
+        // On entry, if a button is still held (e.g. from the menu selection),
+        // wait until it is released so a stale press is not acted on.
         if (any_button_pressed(s)) {
             *wait = true;
             *wait_ms = xTaskGetTickCount();
+            return true;  // stay in entry-wait until the button is released
         }
-        return true;  // stay in entry-wait
+        return false;  // nothing held -> proceed immediately
     }
     if (!any_button_pressed(s) || (xTaskGetTickCount() - *wait_ms) > 1000) {
         *wait = false;
@@ -494,6 +497,14 @@ static void handle_snake(const hid_input_state_t *s, app_state_t *state)
 
     if (mode_entry_wait(&s_entry_wait, &s_entry_ms, s)) {
         snake_game_render();
+        return;
+    }
+
+    // Menu button (GPIO41) returns to the profile menu, like the other modes.
+    if (menu_button_pressed()) {
+        ESP_LOGI(TAG, "Menu button pressed - returning to profile menu");
+        *state = APP_STATE_MENU;
+        s_started = false;
         return;
     }
 

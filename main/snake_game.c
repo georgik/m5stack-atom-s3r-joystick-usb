@@ -9,6 +9,8 @@
 #include "snake_game.h"
 #include <raylib.h>
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -18,7 +20,17 @@ static const char *TAG = "SNAKE_GAME";
 #define GRID_SIZE 16
 #define CELL_SIZE 8
 #define SNAKE_INITIAL_LENGTH 3
-#define SNAKE_MOVE_INTERVAL 4          // Move snake every 4 frames (~400ms)
+/*
+ * Snake movement is driven by REAL elapsed time, not by the frame count.
+ * The snake advances every SNAKE_MOVE_INTERVAL_MS of wall-clock time, so its
+ * speed stays constant even if the host CPU / frame rate varies (a frame-count
+ * interval would instead speed up or slow down with the loop rate).
+ * Timing uses the FreeRTOS tick clock (xTaskGetTickCount / pdMS_TO_TICKS), which
+ * is independent of the loop rate. NOTE: raylib's GetTime() on this esp-idf port
+ * is a stub that always returns 0, so it CANNOT be used for timing here.
+ * Classic snake pace: ~6.7 moves per second.
+ */
+#define SNAKE_MOVE_INTERVAL_MS 150
 
 // Direction enumeration
 typedef enum {
@@ -44,7 +56,8 @@ static int score = 0;
 static bool game_active = false;
 static bool game_over = false;
 static bool game_paused = false;
-static int frame_count = 0;           // Frame counter for snake movement timing
+static TickType_t last_move_tick = 0;             // xTaskGetTickCount() of the last snake move
+static int move_interval_ms = SNAKE_MOVE_INTERVAL_MS;  // Configurable move period (ms)
 
 /**
  * @brief Generate random position for food
@@ -109,11 +122,14 @@ static void update_game(void)
         return;
     }
 
-    // Only move snake every N frames to control speed
-    frame_count++;
-    if (frame_count % SNAKE_MOVE_INTERVAL != 0) {
-        return;  // Skip movement this frame
+    // Move the snake on a fixed REAL-time schedule (robust to frame-rate / HW
+    // variation). Use the FreeRTOS tick clock: GetTime() on this esp-idf port is a
+    // stub that always returns 0, so xTaskGetTickCount() is the reliable clock.
+    const TickType_t now = xTaskGetTickCount();
+    if ((now - last_move_tick) < pdMS_TO_TICKS(move_interval_ms)) {
+        return;  // Not enough elapsed time for the next move yet
     }
+    last_move_tick = now;
 
     // Apply queued direction
     current_direction = next_direction;
@@ -173,7 +189,7 @@ void snake_game_init(void)
     game_active = false;
     game_over = false;
     game_paused = false;
-    frame_count = 0;
+    last_move_tick = 0;
 }
 
 void snake_game_start(void)
@@ -188,7 +204,7 @@ void snake_game_start(void)
     game_over = false;
     game_paused = false;
     game_active = true;
-    frame_count = 0;  // Reset frame counter
+    last_move_tick = xTaskGetTickCount();  // First move happens one interval from now
 
     // Initialize snake position (center of screen)
     snake[0].x = GRID_SIZE / 2;
@@ -267,6 +283,20 @@ bool snake_game_handle_input(bool joy1_up, bool joy1_down, bool joy1_left, bool 
 int snake_game_get_score(void)
 {
     return score;
+}
+
+/**
+ * @brief Set the snake move period in milliseconds.
+ *
+ * The snake advances every this-many milliseconds of real time, independent of
+ * the frame rate. Call before or while the game runs to tune the difficulty.
+ * Only values > 0 are accepted.
+ */
+void snake_game_set_move_interval_ms(int ms)
+{
+    if (ms > 0) {
+        move_interval_ms = ms;
+    }
 }
 
 void snake_game_update(void)
