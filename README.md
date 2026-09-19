@@ -1,7 +1,7 @@
 # AtomS3R USB Joystick (ESP32-S3)
 
 A HID game controller and multi-mode peripheral firmware for the
-[M5Stack AtomS3R](https://m5stack.com/product/t-atom-atom-s3r) (ESP32-S3) board.
+[M5Stack AtomS3R](https://docs.m5stack.com/en/core/AtomS3R) (ESP32-S3) board.
 The firmware is built on top of [raylib](https://www.raylib.com/) with its
 software renderer driving the on-panel LCD, and exposes the device as a USB HID
 controller, a BLE HID controller, an MSC storage device, and a small Snake game.
@@ -10,28 +10,35 @@ Device state is chosen through a profile-selection menu rendered on the built-in
 display. Each profile is a named configuration that selects which mode the board
 enters when it enumerates.
 
+Atom JoyStick board contains high quality HAL joysticks suitable for very fine control.
+It can be used to control games like [Uncrashed](https://store.steampowered.com/app/1682970/Uncrashed__FPV_Drone_Simulator/).
+
 ## Features
 
-- Profile-selection menu rendered on the 128x128 GC9107 display.
-- USB HID: gamepad, keyboard, and mouse reports (via libtinyusb).
-- BLE HID: gamepad, keyboard, and mouse over Bluetooth.
+- Profile-selection menu rendered on the 128x128 GC9107 display.\
+  ![Profile menu](docs/img/m5stack-usb-joystick-menu.webp)
+- USB HID: gamepad, keyboard, and mouse reports (via libtinyusb).\
+  ![USB mode](docs/img/m5stack-usb-joystick-usb-mode.webp)
+- (in progress): BLE HID: gamepad, keyboard, and mouse over Bluetooth.
 - USB Mass Storage device.
-- Snake mini-game selectable from the menu.
+- Snake mini-game selectable from the menu.\
+  ![Snake game](docs/img/m5stack-usb-joystick-snake.webp)
 - Profiles loaded from on-board storage or a built-in default set.
-- Backlight driven through the on-board LP5562 LED controller.
 
 ## Hardware
 
-This project targets the AtomS3R module and its peripherals. The relevant wiring
-is fixed by the board and is documented below.
+- [M5Stack AtomS3R](https://docs.m5stack.com/en/core/AtomS3R) - HW rev: 2025.09.19
+- [Atom JoyStick](https://docs.m5stack.com/en/app/Atom%20JoyStick) - replace AtomS3 unit with AtomS3R mentioned above (requires PSRAM)
+
+Note: For older version with just with Atom JoyStick, check out repo: https://github.com/georgik/m5stack-atom-joystick-usb
 
 ### Display
 
 The module ships with a GC9107 panel (a member of the GC91xx family, register-compatible
 with GC9A01). ESP-IDF ships no dedicated GC9107 driver, so we drive it with
-`esp_lcd_gc9a01`. The ST7789 driver must NOT be used here — it sends Sitronix init
-commands the GC9107 ignores, which produced the split/mirrored/inverted artifacts seen
-earlier.
+`esp_lcd_gc9a01`. 
+
+Note: Current code is for HW rev: 2025.09.19, newer HW rev requirs change to ST7789 (not implemented yet)
 
 | Signal | GPIO |
 | --------- | --------- |
@@ -124,14 +131,10 @@ selection is highlighted, and a bright bar follows the list as it scrolls.
 - `main/snake_game.c`: Snake game logic.
 - `main/ui.c`: status and USB-active screen rendering helpers.
 
-The display initialization and framebuffer flush are preserved verbatim from the
-reference M5Stack AtomS3R raylib example, so the rendering path matches the
-validated hardware configuration.
-
 ## Build
 
-The project uses the ESP-IDF build system. Set `IDF_PATH` to your ESP-IDF
-checkout (v6.0 or newer) and run from the project directory:
+The project uses the ESP-IDF build system. Set `IDF_PATH` to your [ESP-IDF v6.1 or newer](https://docs.espressif.com/projects/idf-im-ui/en/latest/)
+and run from the project directory:
 
 ```bash
 idf.py set-target esp32s3
@@ -143,9 +146,7 @@ idf.py build
 Flash to the device with your serial port:
 
 ```bash
-idf.py -p /dev/ttyACM0 flash monitor
+idf.py flash monitor
 ```
 
-The device enumerates and the profile menu appears on the display once the
-firmware starts.
 
