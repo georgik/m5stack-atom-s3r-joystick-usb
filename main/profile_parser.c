@@ -13,6 +13,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <errno.h>
 
 static const char *TAG = "PROFILE_PARSER";
 
@@ -142,9 +143,19 @@ int profile_parser_load_profiles(void)
 {
     ESP_LOGI(TAG, "Loading profiles from /storage/profiles/...");
 
+    // Diagnostic: is the mount point itself openable? This tells us whether
+    // the FATfs filesystem is actually registered at /storage at this point.
+    DIR *root = opendir("/storage");
+    if (root == NULL) {
+        ESP_LOGE(TAG, "DIAG: opendir(\"/storage\") failed errno=%d (%s)", errno, strerror(errno));
+    } else {
+        ESP_LOGI(TAG, "DIAG: /storage is openable");
+        closedir(root);
+    }
+
     DIR *dir = opendir("/storage/profiles");
     if (dir == NULL) {
-        ESP_LOGW(TAG, "Failed to open /storage/profiles/, using defaults");
+        ESP_LOGW(TAG, "Failed to open /storage/profiles/, errno=%d (%s), using defaults", errno, strerror(errno));
         goto load_defaults;
     }
 

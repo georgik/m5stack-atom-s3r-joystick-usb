@@ -26,6 +26,10 @@ static wl_handle_t s_wl_handle = WL_INVALID_HANDLE;
 static tinyusb_msc_storage_handle_t s_msc_storage_hdl = {0};
 static bool s_msc_initialized = false;
 static bool s_usb_mode_active = false;
+// Set when the host issues a STOP UNIT / eject (macOS "Eject M5STACK"). The USB
+// cable stays plugged in, so tud_mounted() remains true; the only signal is the
+// mount-to-APP that tinyusb performs on eject (see tud_msc_start_stop_cb).
+static volatile bool s_ejected = false;
 
 // MSC event callback
 static void msc_event_callback(tinyusb_msc_storage_handle_t handle,
@@ -41,7 +45,17 @@ static void msc_event_callback(tinyusb_msc_storage_handle_t handle,
             ESP_LOGI(TAG, "MSC mount/unmount started");
             break;
         case TINYUSB_MSC_EVENT_MOUNT_COMPLETE:
-            ESP_LOGI(TAG, "MSC mount/unmount complete");
+            ESP_LOGI(TAG, "MSC mount/unmount complete (mount_point=%d)",
+                     event->mount_point);
+            // A mount-to-APP that arrives while USB MSC mode is already active
+            // means the host issued STOP UNIT / eject (macOS "Eject"). tinyusb
+            // has already remounted the storage back to the app; flag it so the
+            // app can leave MSC and return to the menu.
+            if (event->mount_point == TINYUSB_MSC_STORAGE_MOUNT_APP && s_usb_mode_active) {
+                ESP_LOGI(TAG, "Host ejected the volume - flagging exit to menu");
+                s_ejected = true;
+                s_usb_mode_active = false;
+            }
             break;
         case TINYUSB_MSC_EVENT_MOUNT_FAILED:
             ESP_LOGE(TAG, "MSC mount operation failed");
@@ -225,6 +239,17 @@ esp_err_t msc_storage_stop_usb_mode(void)
 bool msc_storage_is_usb_active(void)
 {
     return s_usb_mode_active;
+}
+
+// Returns true if the host ejected the volume (SCSI STOP UNIT) since the last
+// check, and clears the flag so it fires exactly once until the next eject.
+bool msc_storage_check_ejected(void)
+{
+    if (s_ejected) {
+        s_ejected = false;
+        return true;
+    }
+    return false;
 }
 
 const char* msc_storage_get_mount_point(void)

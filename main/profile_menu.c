@@ -109,6 +109,14 @@ void profile_menu_render(void)
         }
         row++;
     }
+
+    // Footer: tell the user where the profiles came from. "Built-in defaults"
+    // means /storage was not mounted (see msc_storage_init) or no profiles were
+    // found there -- a quick diagnostic when BLE profiles look missing.
+    const char *source = profile_parser_profiles_loaded()
+        ? "Profiles from storage" : "Built-in defaults";
+    DrawText(source, (w - MeasureText(source, fs - 1)) / 2,
+             h - (margin_bottom + fs), fs - 1, GRAY);
 }
 
 bool profile_menu_handle_input(bool joy1_up, bool joy1_down, bool button_pressed)

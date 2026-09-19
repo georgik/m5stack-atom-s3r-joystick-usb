@@ -17,6 +17,11 @@ CONFIG_BT_NIMBLE_HID_SERVICE=y
 # FATfs volume label (needed for f_setlabel in msc_storage)
 CONFIG_FATFS_USE_LABEL=y
 
+# Use the project's custom partition table (partitions.csv) so the
+# 'storage' FAT partition exists and is pre-populated with profiles.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
 # TinyUSB MSC storage + HID interface
 CONFIG_TINYUSB_MSC_ENABLED=y
 CONFIG_TINYUSB_MSC_BUFSIZE=4096

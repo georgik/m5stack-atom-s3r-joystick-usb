@@ -250,7 +250,26 @@ typedef enum {
     APP_STATE_BLE_HID,
     APP_STATE_MSC,
     APP_STATE_SNAKE,
+    APP_STATE_ERROR,
 } app_state_t;
+
+/*
+ * On-screen error state. USB/BLE/MSC modes cannot be debugged via serial once
+ * active (the USB port is busy with HID, BLE has no serial), so mode-init
+ * failures are shown on the display instead of only being logged. The user
+ * acknowledges the error by pressing any button, which returns to the menu.
+ */
+static char s_error_title[32] = "";
+static char s_error_msg[48] = "";
+
+static void set_error(const char *title, const char *msg)
+{
+    strncpy(s_error_title, title, sizeof(s_error_title) - 1);
+    s_error_title[sizeof(s_error_title) - 1] = '\0';
+    strncpy(s_error_msg, msg, sizeof(s_error_msg) - 1);
+    s_error_msg[sizeof(s_error_msg) - 1] = '\0';
+    ESP_LOGE(TAG, "Error: %s %s", s_error_title, s_error_msg);
+}
 
 /* Sampled hardware input, filled by gpio_input_read(). */
 static bool any_button_pressed(const hid_input_state_t *s)
@@ -370,7 +389,9 @@ static void handle_usb_hid(const hid_input_state_t *s, app_state_t *state,
 
         if (hid_reports_install_usb_hid() != ESP_OK) {
             ESP_LOGE(TAG, "tinyusb HID install failed");
-            *state = APP_STATE_MENU;
+            set_error("USB HID", "install failed");
+            s_setup = false;
+            *state = APP_STATE_ERROR;
             return;
         }
         ui_reset_uptime();
@@ -428,7 +449,9 @@ static void handle_ble_hid(const hid_input_state_t *s, app_state_t *state,
     if (!s_init) {
         if (ble_hid_init() != ESP_OK) {
             ESP_LOGE(TAG, "ble_hid_init failed");
-            *state = APP_STATE_MENU;
+            set_error("BLE HID", "init failed");
+            s_init = false;
+            *state = APP_STATE_ERROR;
             return;
         }
         ui_reset_uptime();
@@ -476,11 +499,17 @@ static void handle_msc(const hid_input_state_t *s, app_state_t *state)
     if (!s_started) {
         if (hid_reports_install_usb_msc() != ESP_OK) {
             ESP_LOGE(TAG, "tinyusb MSC install failed");
-            *state = APP_STATE_MENU;
+            set_error("USB MSC", "install failed");
+            s_started = false;
+            *state = APP_STATE_ERROR;
             return;
         }
         if (msc_storage_start_usb_mode() != ESP_OK) {
             ESP_LOGE(TAG, "MSC start failed");
+            set_error("Storage", "mount failed");
+            s_started = false;
+            *state = APP_STATE_ERROR;
+            return;
         }
         s_started = true;
         s_entry_done = false;
@@ -497,17 +526,17 @@ static void handle_msc(const hid_input_state_t *s, app_state_t *state)
 
     ui_show_usb_active("Mass Storage");
 
-    if (menu_button_pressed(s)) {
+    // Leave Mass Storage mode. The tinyUSB driver is shared between the USB HID
+    // modes and MSC, and tinyusb_driver_install() only succeeds once per boot,
+    // so we reboot to reset it before any mode can be re-selected. This mirrors
+    // the USB HID exit path (menu button -> esp_restart) and the reference
+    // firmware, which runs one profile per boot. An eject is detected
+    // separately because tud_mounted() stays true after the host unmounts the
+    // volume.
+    if (menu_button_pressed(s) || !hid_reports_usb_mounted() || msc_storage_check_ejected()) {
         msc_storage_stop_usb_mode();
-        ESP_LOGI(TAG, "Menu button pressed - restarting");
+        ESP_LOGI(TAG, "Exiting Mass Storage mode - rebooting to return to menu");
         esp_restart();
-    }
-
-    // Host ejected / disconnected: stop MSC and return to menu.
-    if (!hid_reports_usb_mounted()) {
-        msc_storage_stop_usb_mode();
-        s_started = false;
-        *state = APP_STATE_MENU;
     }
 }
 
@@ -572,6 +601,21 @@ static void handle_snake(const hid_input_state_t *s, app_state_t *state)
     snake_game_render();
 }
 
+/*
+ * On-screen error state: draw the failure and wait for the user to acknowledge
+ * it (press any button) before returning to the profile menu. This is the only
+ * way to surface a mode-init failure while USB/BLE/MSC is active and serial is
+ * unavailable.
+ */
+static void handle_error(const hid_input_state_t *s, app_state_t *state)
+{
+    if (any_button_pressed(s)) {
+        *state = APP_STATE_MENU;
+        return;
+    }
+    ui_show_error(s_error_title, s_error_msg);
+}
+
 void raylib_task(void *pvParameter)
 {
     ESP_LOGI(TAG, "Initializing Raylib...");
@@ -612,6 +656,9 @@ void raylib_task(void *pvParameter)
         case APP_STATE_SNAKE:
             handle_snake(&input, &state);
             break;
+        case APP_STATE_ERROR:
+            handle_error(&input, &state);
+            break;
         }
 
         EndDrawing();
@@ -639,6 +686,20 @@ void app_main(void)
     ESP_LOGI(TAG, "Starting AtomS3 USB Joystick");
 
     ESP_ERROR_CHECK(init_display());
+
+    // Initialize MSC storage (FATfs) so the 'storage' partition is mounted.
+    // This is the only function that mounts /storage, so the profile menu can
+    // read /storage/profiles/ (BLE profiles) and Mass Storage mode can work.
+    // Mirrors the reference gpio-keyboard.c app_main (which calls it before
+    // showing the profile menu). Without this the FAT is never mounted and the
+    // profile parser silently falls back to built-in defaults.
+    esp_err_t err = msc_storage_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to initialize MSC storage: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "Continuing without mass storage support");
+    } else {
+        ESP_LOGI(TAG, "MSC storage initialized: %s", msc_storage_get_mount_point());
+    }
 
     xTaskCreatePinnedToCore(raylib_task, "raylib", RAYLIB_TASK_STACK_SIZE,
                             NULL, 5, NULL, 1);

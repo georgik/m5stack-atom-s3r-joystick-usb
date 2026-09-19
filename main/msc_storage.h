@@ -46,6 +46,17 @@ esp_err_t msc_storage_stop_usb_mode(void);
 bool msc_storage_is_usb_active(void);
 
 /**
+ * @brief Check and clear the host-ejected flag.
+ *
+ * Returns true once (until the next eject) after the host issues a STOP UNIT /
+ * eject command (e.g. macOS "Eject M5STACK"), and clears the flag so it fires
+ * exactly once per eject.
+ *
+ * @return true if the volume was ejected since the last call, false otherwise
+ */
+bool msc_storage_check_ejected(void);
+
+/**
  * @brief Create default configuration files
  *
  * Creates profiles.ini and system.ini with default values if they

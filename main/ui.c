@@ -80,3 +80,29 @@ void ui_show_usb_active(const char *profile_name)
     snprintf(ubuf, sizeof(ubuf), "Uptime: %ds", elapsed_sec);
     DrawText(ubuf, (w - MeasureText(ubuf, fs)) / 2, 88, fs, GRAY);
 }
+
+void ui_show_error(const char *line1, const char *line2)
+{
+    const int w = GetScreenWidth();
+    const int h = GetScreenHeight();
+    const int fs = 10;
+
+    // Dim background so the error stands out from the normal screens.
+    DrawRectangle(0, 0, w, h, GRAY);
+
+    const char *title = "ERROR";
+    DrawText(title, (w - MeasureText(title, fs + 2)) / 2, 26, fs + 2, RED);
+
+    if (line1 != NULL) {
+        DrawText(line1, (w - MeasureText(line1, fs)) / 2, 56, fs, WHITE);
+    }
+    if (line2 != NULL) {
+        DrawText(line2, (w - MeasureText(line2, fs)) / 2, 78, fs, GRAY);
+    }
+
+    const char *hint = "Press any button";
+    DrawText(hint, (w - MeasureText(hint, fs - 1)) / 2, 106, fs - 1, DARKGRAY);
+
+    ESP_LOGE(TAG, "UI ERROR: %s %s", line1 ? line1 : "", line2 ? line2 : "");
+}
+
