@@ -10,7 +10,7 @@ Device state is chosen through a profile-selection menu rendered on the built-in
 display. Each profile is a named configuration that selects which mode the board
 enters when it enumerates.
 
-Atom JoyStick board contains high quality HAL joysticks suitable for very fine control.
+Atom JoyStick board contains high quality hall-effect joysticks suitable for very fine control.
 It can be used to control games like [Uncrashed](https://store.steampowered.com/app/1682970/Uncrashed__FPV_Drone_Simulator/).
 
 ## Features
