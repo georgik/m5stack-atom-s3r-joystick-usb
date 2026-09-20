@@ -133,13 +133,15 @@ selection is highlighted, and a bright bar follows the list as it scrolls.
 
 ## Build
 
-The project uses the ESP-IDF build system. Set `IDF_PATH` to your [ESP-IDF v6.1 or newer](https://docs.espressif.com/projects/idf-im-ui/en/latest/)
+The project uses the ESP-IDF build system. Set `IDF_PATH` to your [ESP-IDF v6.1](https://docs.espressif.com/projects/idf-im-ui/en/latest/)
 and run from the project directory:
 
 ```bash
 idf.py set-target esp32s3
 idf.py build
 ```
+
+Tested with ESP-IDF commit: [97d95853572ab74f476959](https://github.com/espressif/esp-idf/commit/97d95853572ab74f476959)
 
 ## Flash
 
