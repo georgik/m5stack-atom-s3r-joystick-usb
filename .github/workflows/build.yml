@@ -1,0 +1,44 @@
+name: Build Firmware
+
+# Build the ESP32-S3 firmware on every push to main and produce the merged
+# binary as a downloadable artifact. A tagged/manual release is published by
+# release.yml (see README "Web-based Flashing").
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ESP32-S3 firmware
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build ESP-IDF project
+        uses: espressif/esp-idf-ci-action@v1.1.0
+        with:
+          esp_idf_version: release-v6.1
+          target: esp32s3
+          path: '.'
+          command: |
+            set -e
+            idf.py set-target esp32s3
+            idf.py build
+            cd build
+            # Merge bootloader + partition table + app + storage into a single
+            # ESP Launchpad-compatible binary (see flasher_args.json / flash_args).
+            esptool.py --chip esp32s3 merge-bin -o atom-s3r-joystick-latest-esp32s3.bin "@flash_args"
+
+      - name: Upload merged firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: atom-s3r-joystick-latest-esp32s3.bin
+          path: build/atom-s3r-joystick-latest-esp32s3.bin
+          retention-days: 7

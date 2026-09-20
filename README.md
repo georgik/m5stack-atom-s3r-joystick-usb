@@ -143,6 +143,18 @@ idf.py build
 
 Tested with ESP-IDF commit: [97d95853572ab74f476959](https://github.com/espressif/esp-idf/commit/97d95853572ab74f476959)
 
+## Web-based Flashing (Easiest)
+
+For the quickest install, use the web-based ESP Launchpad installer (Chrome/Edge recommended). No drivers or tools required — it runs entirely in your browser:
+
+[![Try it with ESP Launchpad](https://espressif.github.io/esp-launchpad/assets/try_with_launchpad.png)](https://georgik.github.io/m5stack-atom-s3r-joystick-usb/?flashConfigURL=https://georgik.github.io/m5stack-atom-s3r-joystick-usb/config/config.toml)
+
+1. Connect your AtomS3R USB Joystick board via USB.
+2. Click the button above to open the web installer.
+3. Click **Connect**, select the board's serial port, then click **Flash**.
+
+The installer flashes a single merged binary (bootloader + partition table + application + storage partition). Pre-built binaries are produced by the CI workflow and attached to each GitHub Release.
+
 ## Flash
 
 Flash to the device with your serial port:

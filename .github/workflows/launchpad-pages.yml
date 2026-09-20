@@ -1,0 +1,76 @@
+name: Deploy ESP Launchpad to Pages
+
+# Publish the ESP Launchpad web installer to GitHub Pages so users can flash the
+# firmware straight from their browser. The latest release binary is fetched and
+# served from /firmware/, referenced by launchpad/config/config.toml.
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - 'launchpad/**'
+      - '.github/workflows/launchpad-pages.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "launchpad-pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clone ESP Launchpad
+        run: |
+          git clone https://github.com/espressif/esp-launchpad.git temp-launchpad
+
+      - name: Download latest release binaries
+        run: |
+          mkdir -p temp-launchpad/firmware
+          LATEST_RELEASE=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.tag_name')
+          echo "Latest release: $LATEST_RELEASE"
+          # Download the release binary but serve it under the stable "latest"
+          # name referenced by launchpad/config/config.toml.
+          curl -L -o temp-launchpad/firmware/atom-s3r-joystick-latest-esp32s3.bin \
+            "https://github.com/${{ github.repository }}/releases/latest/download/atom-s3r-joystick-${LATEST_RELEASE}-esp32s3.bin" \
+            || echo "Firmware binary not found (publish a release first)."
+
+      - name: Setup custom configuration
+        run: |
+          cp launchpad/config/config.toml temp-launchpad/config/config.toml
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: |
+          cd temp-launchpad
+          npm install
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'temp-launchpad'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

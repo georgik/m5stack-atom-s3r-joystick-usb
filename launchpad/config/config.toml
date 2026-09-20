@@ -1,0 +1,29 @@
+esp_toml_version = 1.0
+
+# Base URL where the merged firmware binaries are hosted. The launchpad-pages
+# workflow downloads the latest release binary into /firmware/ of the GitHub
+# Pages site, so this URL + the image filename below must resolve to it.
+firmware_images_url = "https://georgik.github.io/m5stack-atom-s3r-joystick-usb/firmware/"
+
+# Application(s) available for flashing.
+supported_apps = ["AtomS3RJoystick"]
+
+# Documentation shown inside the launchpad help panel.
+config_readme_url = "https://raw.githubusercontent.com/georgik/m5stack-atom-s3r-joystick-usb/main/README.md"
+
+[AtomS3RJoystick]
+# Supported ESP32 chipsets.
+chipsets = ["ESP32-S3"]
+
+# Development kit(s) this firmware targets.
+developKits.esp32-s3 = ["m5stack-atom-s3r-usb-joystick"]
+
+# Merged binary (bootloader + partition table + app + storage) per board.
+image.esp32-s3-m5stack-atom-s3r-usb-joystick = "atom-s3r-joystick-latest-esp32s3.bin"
+
+description = "M5Stack AtomS3R USB Joystick - HID game controller firmware with USB/BLE HID, USB Mass Storage, and a Snake game, running on ESP32-S3 with a raylib UI."
+
+readme.text = "https://raw.githubusercontent.com/georgik/m5stack-atom-s3r-joystick-usb/main/README.md"
+
+# Console baud rate for the serial monitor.
+console_baudrate = 115200
