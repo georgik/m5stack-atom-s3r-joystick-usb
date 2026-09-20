@@ -15,11 +15,10 @@ config_readme_url = "https://raw.githubusercontent.com/georgik/m5stack-atom-s3r-
 # Supported ESP32 chipsets.
 chipsets = ["ESP32-S3"]
 
-# Development kit(s) this firmware targets.
-developKits.esp32-s3 = ["m5stack-atom-s3r-usb-joystick"]
-
-# Merged binary (bootloader + partition table + app + storage) per board.
-image.esp32-s3-m5stack-atom-s3r-usb-joystick = "atom-s3r-joystick-latest-esp32s3.bin"
+# Merged binary (bootloader + partition table + app + storage). The Launchpad UI
+# resolves the flash URL as firmware_images_url + this filename, so it must be
+# the bare filename served under /firmware/ (NOT prefixed with the chip/kit).
+image.esp32-s3 = "atom-s3r-joystick-latest-esp32s3.bin"
 
 description = "M5Stack AtomS3R USB Joystick - HID game controller firmware with USB/BLE HID, USB Mass Storage, and a Snake game, running on ESP32-S3 with a raylib UI."
 
