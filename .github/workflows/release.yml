@@ -1,21 +1,14 @@
 name: Release Firmware
 
-# Manual workflow: build the firmware, create a GitHub Release, and attach the
-# merged binary. The release notes link to the ESP Launchpad web installer so
-# users can flash straight from their browser. See README "Web-based Flashing".
+# Triggered by pushing a tag matching v* (e.g. `git tag v1.0.0 && git push --tags`).
+# Builds the versioned merged binary and publishes a GitHub Release with it
+# attached. The release notes embed the ESP Launchpad "try it" button so users
+# can flash straight from their browser. Version is derived from the tag name.
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version tag (e.g., v1.0.0)'
-        required: true
-        default: 'v1.0.0'
-      prerelease:
-        description: 'Mark as prerelease'
-        required: false
-        default: false
-        type: boolean
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
@@ -28,6 +21,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Build ESP-IDF project
         uses: espressif/esp-idf-ci-action@v1.1.0
@@ -40,13 +35,13 @@ jobs:
             idf.py set-target esp32s3
             idf.py build
             cd build
-            esptool.py --chip esp32s3 merge-bin -o atom-s3r-joystick-${{ github.event.inputs.version }}-esp32s3.bin "@flash_args"
+            esptool.py --chip esp32s3 merge-bin -o atom-s3r-joystick-${{ github.ref_name }}-esp32s3.bin "@flash_args"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: atom-s3r-joystick-${{ github.event.inputs.version }}-esp32s3.bin
-          path: build/atom-s3r-joystick-${{ github.event.inputs.version }}-esp32s3.bin
+          name: atom-s3r-joystick-${{ github.ref_name }}-esp32s3.bin
+          path: build/atom-s3r-joystick-${{ github.ref_name }}-esp32s3.bin
 
   release:
     needs: build
@@ -68,7 +63,7 @@ jobs:
       - name: Generate release notes
         run: |
           cat > release-notes.md <<EOF
-          # AtomS3R USB Joystick Firmware \${{ github.event.inputs.version }}
+          # AtomS3R USB Joystick Firmware \${{ github.ref_name }}
 
           Pre-built merged firmware for the [M5Stack AtomS3R](https://docs.m5stack.com/en/core/AtomS3R) (ESP32-S3).
           The binary bundles bootloader, partition table, application, and the FAT
@@ -88,7 +83,7 @@ jobs:
           ## Manual Flashing
 
           ```bash
-          esptool.py --chip esp32s3 --baud 460800 --before default_reset --after hard_reset write_flash 0x0 atom-s3r-joystick-${{ github.event.inputs.version }}-esp32s3.bin
+          esptool.py --chip esp32s3 --baud 460800 --before default_reset --after hard_reset write_flash 0x0 atom-s3r-joystick-${{ github.ref_name }}-esp32s3.bin
           ```
 
           ## Hardware
@@ -100,9 +95,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.event.inputs.version }}
-          name: Firmware ${{ github.event.inputs.version }}
+          tag_name: ${{ github.ref_name }}
+          name: Firmware ${{ github.ref_name }}
           draft: false
-          prerelease: ${{ github.event.inputs.prerelease }}
+          prerelease: false
           body_file: release-notes.md
           files: release/*.bin
