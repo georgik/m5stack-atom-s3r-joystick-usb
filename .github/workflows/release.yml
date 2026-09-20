@@ -1,0 +1,108 @@
+name: Release Firmware
+
+# Manual workflow: build the firmware, create a GitHub Release, and attach the
+# merged binary. The release notes link to the ESP Launchpad web installer so
+# users can flash straight from their browser. See README "Web-based Flashing".
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+      prerelease:
+        description: 'Mark as prerelease'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build firmware
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build ESP-IDF project
+        uses: espressif/esp-idf-ci-action@v1.1.0
+        with:
+          esp_idf_version: release-v6.1
+          target: esp32s3
+          path: '.'
+          command: |
+            set -e
+            idf.py set-target esp32s3
+            idf.py build
+            cd build
+            esptool.py --chip esp32s3 merge-bin -o atom-s3r-joystick-${{ github.event.inputs.version }}-esp32s3.bin "@flash_args"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: atom-s3r-joystick-${{ github.event.inputs.version }}-esp32s3.bin
+          path: build/atom-s3r-joystick-${{ github.event.inputs.version }}-esp32s3.bin
+
+  release:
+    needs: build
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find artifacts -name "*.bin" -exec cp {} release/ \;
+          ls -lh release/
+
+      - name: Generate release notes
+        run: |
+          cat > release-notes.md <<EOF
+          # AtomS3R USB Joystick Firmware \${{ github.event.inputs.version }}
+
+          Pre-built merged firmware for the [M5Stack AtomS3R](https://docs.m5stack.com/en/core/AtomS3R) (ESP32-S3).
+          The binary bundles bootloader, partition table, application, and the FAT
+          storage partition into a single flash image.
+
+          ## Web-based Flashing (Easiest)
+
+          Use the web-based ESP Launchpad installer (Chrome/Edge recommended) to
+          flash directly from your browser — no drivers or tools required:
+
+          [![Try it with ESP Launchpad](https://espressif.github.io/esp-launchpad/assets/try_with_launchpad.png)](https://georgik.github.io/m5stack-atom-s3r-joystick-usb/?flashConfigURL=https://georgik.github.io/m5stack-atom-s3r-joystick-usb/config/config.toml)
+
+          1. Connect your AtomS3R USB Joystick board via USB.
+          2. Click the button above to open the web installer.
+          3. Click **Connect**, select the board's serial port, then click **Flash**.
+
+          ## Manual Flashing
+
+          ```bash
+          esptool.py --chip esp32s3 --baud 460800 --before default_reset --after hard_reset write_flash 0x0 atom-s3r-joystick-${{ github.event.inputs.version }}-esp32s3.bin
+          ```
+
+          ## Hardware
+
+          - M5Stack AtomS3R (ESP32-S3) + Atom JoyStick module (requires PSRAM)
+          - USB cable for programming and power
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: Firmware ${{ github.event.inputs.version }}
+          draft: false
+          prerelease: ${{ github.event.inputs.prerelease }}
+          body_file: release-notes.md
+          files: release/*.bin
