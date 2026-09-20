@@ -14,6 +14,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include "ff.h"
 
 static const char *TAG = "PROFILE_PARSER";
 
@@ -46,11 +47,35 @@ static profile_type_t parse_profile_type(const char *type_str)
     return PROFILE_TYPE_UNKNOWN;
 }
 
+// Read an entire file via the FATfs drive path into a NUL-terminated buffer.
+// The app reads storage through the raw FATfs drive ("0:/") because the POSIX
+// VFS mount point ("/storage") registered by tinyusb is not routable in this
+// build (see wiki/working-version.md).
+static bool fs_read_file(const char *path, char *buf, size_t buf_size, size_t *out_len)
+{
+    FIL fil;
+    FRESULT res = f_open(&fil, path, FA_READ);
+    if (res != FR_OK) {
+        ESP_LOGW(TAG, "fs_read_file: f_open(\"%s\") failed res=%d", path, (int)res);
+        return false;
+    }
+    UINT br = 0;
+    FRESULT rread = f_read(&fil, buf, buf_size - 1, &br);
+    f_close(&fil);
+    if (rread != FR_OK) {
+        ESP_LOGW(TAG, "fs_read_file: f_read(\"%s\") failed res=%d", path, (int)rread);
+        return false;
+    }
+    buf[br] = '\0';
+    *out_len = br;
+    return true;
+}
+
 static bool parse_ini_file(const char *filepath, profile_info_t *profile)
 {
-    FILE *f = fopen(filepath, "r");
-    if (f == NULL) {
-        ESP_LOGW(TAG, "Failed to open file: %s", filepath);
+    char buf[2048];
+    size_t len = 0;
+    if (!fs_read_file(filepath, buf, sizeof(buf), &len)) {
         return false;
     }
 
@@ -59,12 +84,26 @@ static bool parse_ini_file(const char *filepath, profile_info_t *profile)
     bool found_name = false;
     bool found_type = false;
 
-    while (fgets(line, sizeof(line), f) != NULL) {
-        // Remove trailing newline
-        line[strcspn(line, "\r\n")] = 0;
+    // Iterate over the file content line by line.
+    char *cursor = buf;
+    while (cursor < buf + len) {
+        // Extract one line (split on '\n', tolerating '\r\n').
+        char *eol = strchr(cursor, '\n');
+        size_t avail = (size_t)(buf + len - cursor);
+        size_t n = avail;
+        if (eol) {
+            n = (size_t)(eol - cursor);
+        }
+        if (n >= sizeof(line)) {
+            n = sizeof(line) - 1;   // truncate over-long lines
+        }
+        memcpy(line, cursor, n);
+        line[n] = '\0';
+        line[strcspn(line, "\r")] = 0;
 
         // Skip empty lines and comments
         if (line[0] == '\0' || line[0] == ';' || line[0] == '#') {
+            cursor = eol ? eol + 1 : buf + len;
             continue;
         }
 
@@ -75,6 +114,7 @@ static bool parse_ini_file(const char *filepath, profile_info_t *profile)
                 *end = '\0';
                 in_profile_section = (strcasecmp(line + 1, "profile") == 0);
             }
+            cursor = eol ? eol + 1 : buf + len;
             continue;
         }
 
@@ -112,9 +152,9 @@ static bool parse_ini_file(const char *filepath, profile_info_t *profile)
                 }
             }
         }
-    }
 
-    fclose(f);
+        cursor = eol ? eol + 1 : buf + len;
+    }
 
     // Profile is valid if it has at least a name
     if (found_name) {
@@ -141,43 +181,43 @@ static bool parse_ini_file(const char *filepath, profile_info_t *profile)
 
 int profile_parser_load_profiles(void)
 {
-    ESP_LOGI(TAG, "Loading profiles from /storage/profiles/...");
+    ESP_LOGI(TAG, "Loading profiles from 0:/profiles/...");
 
-    // Diagnostic: is the mount point itself openable? This tells us whether
-    // the FATfs filesystem is actually registered at /storage at this point.
-    DIR *root = opendir("/storage");
-    if (root == NULL) {
-        ESP_LOGE(TAG, "DIAG: opendir(\"/storage\") failed errno=%d (%s)", errno, strerror(errno));
-    } else {
-        ESP_LOGI(TAG, "DIAG: /storage is openable");
-        closedir(root);
-    }
-
-    DIR *dir = opendir("/storage/profiles");
-    if (dir == NULL) {
-        ESP_LOGW(TAG, "Failed to open /storage/profiles/, errno=%d (%s), using defaults", errno, strerror(errno));
+    // NOTE: we enumerate via the raw FATfs drive ("0:/profiles") rather than the
+    // POSIX VFS ("/storage/profiles"). In this build the /storage VFS mount
+    // registered by tinyusb is not routable for POSIX opendir() (it returns
+    // NULL), while the raw FATfs drive path works. See wiki/working-version.md.
+    FF_DIR dir;
+    FRESULT res = f_opendir(&dir, "0:/profiles");
+    if (res != FR_OK) {
+        ESP_LOGE(TAG, "Failed to open 0:/profiles/ (f_opendir res=%d), using defaults", (int)res);
         goto load_defaults;
     }
 
-    struct dirent *entry;
+    FILINFO fno;
     s_profile_count = 0;
 
-    while ((entry = readdir(dir)) != NULL && s_profile_count < MAX_PROFILES) {
+    for (;;) {
+        FRESULT r = f_readdir(&dir, &fno);
+        if (r != FR_OK || fno.fname[0] == 0) {
+            break;   // end of directory or error
+        }
+
         // Skip files that don't end with .ini
-        size_t len = strlen(entry->d_name);
-        if (len < 4 || strcmp(entry->d_name + len - 4, ".ini") != 0) {
+        size_t len = strlen(fno.fname);
+        if (len < 4 || strcmp(fno.fname + len - 4, ".ini") != 0) {
             continue;
         }
 
         // Build full file path
         char filepath[512];
-        snprintf(filepath, sizeof(filepath), "/storage/profiles/%s", entry->d_name);
+        snprintf(filepath, sizeof(filepath), "0:/profiles/%s", fno.fname);
 
         // Parse the profile file
         profile_info_t profile = {0};
         if (parse_ini_file(filepath, &profile)) {
             // Store the filename
-            strncpy(profile.filename, entry->d_name, MAX_PROFILE_PATH - 1);
+            strncpy(profile.filename, fno.fname, MAX_PROFILE_PATH - 1);
             profile.filename[MAX_PROFILE_PATH - 1] = '\0';
             profile.is_valid = true;
 
@@ -187,11 +227,11 @@ int profile_parser_load_profiles(void)
             ESP_LOGI(TAG, "  Threshold: %.2f", profile.joystick_threshold);
             s_profile_count++;
         } else {
-            ESP_LOGW(TAG, "Failed to parse profile file: %s", entry->d_name);
+            ESP_LOGW(TAG, "Failed to parse profile file: %s", fno.fname);
         }
     }
 
-    closedir(dir);
+    f_closedir(&dir);
 
     if (s_profile_count > 0) {
         // Add Mass Storage option at the end
