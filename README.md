@@ -24,6 +24,7 @@ It can be used to control games like [Uncrashed](https://store.steampowered.com/
 - Snake mini-game selectable from the menu.\
   ![Snake game](docs/img/m5stack-usb-joystick-snake.webp)
 - Profiles loaded from on-board storage or a built-in default set.
+- 180° screen rotation so the board can be played upside-down (USB connector facing the player).
 
 ## Web-based Flashing (Easiest)
 
@@ -121,8 +122,49 @@ The menu scrolls automatically so the selected entry is always visible when the
 list is longer than the display. Move the cursor up and down to browse, the
 selection is highlighted, and a bright bar follows the list as it scrolls.
 
-## Architecture
+## Screen Rotation (180° Orientation)
 
+The main display can be rotated 180° so the board can be played upside-down, with
+the USB connector facing the player. This is useful when the AtomS3R is mounted or
+held in an inverted posture.
+
+### Activating the rotation
+
+The rotation is toggled from the profile-selection menu:
+
+1. From the menu, press and release the LEFT face button (labelled "L").
+2. The display flips 180° and the backlight pulses briefly as confirmation.
+3. Press and release the LEFT face button again to return to the normal
+   orientation (USB connector pointing down).
+
+The device boots in the normal orientation by default.
+
+### Behaviour when rotated
+
+When the rotation is active the firmware keeps the controls natural from the
+player's point of view:
+
+- The two joysticks are swapped, so the physical left stick controls the on-screen
+  right stick (and vice versa).
+- Each stick axis is inverted around its centre, so pushing a stick in the
+  direction that feels natural upside-down moves the cursor the expected way.
+
+This input remapping is applied to the raw input before it reaches the menu, the
+USB/BLE HID gamepad reports, and the Snake game, so every mode behaves
+consistently while the display is flipped. The display returns to the normal
+orientation immediately once the rotation is toggled off.
+
+### Implementation notes
+
+The rotation is performed entirely in the LCD controller with
+`esp_lcd_panel_mirror()`. The board's GC9107 panel is hardware-mirrored on the X
+axis at initialization, so a 180° rotation is the complement of that baseline
+(`MX` cleared, `MY` set). The framebuffer produced by the display driver is
+unchanged; the panel simply writes it flipped on both axes. The input remapping
+(`apply_screen_flip`) is a no-op when the rotation is disabled, so the normal
+orientation is left untouched.
+
+## Architecture
 - `main/main.c`: entry point, display and peripheral initialization, the
   application state machine (`APP_STATE_MENU`, `APP_STATE_USB_HID`,
   `APP_STATE_BLE_HID`, `APP_STATE_MSC`, `APP_STATE_SNAKE`), and the raylib render
