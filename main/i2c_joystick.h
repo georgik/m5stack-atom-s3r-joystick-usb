@@ -74,6 +74,33 @@ esp_err_t i2c_joystick_read_axis(i2c_joystick_handle_t *stick, uint8_t reg, uint
 esp_err_t i2c_joystick_read_button(i2c_joystick_handle_t *stick, uint8_t button, bool *pressed);
 
 /**
+ * @brief Read the raw (un-debounced, un-inverted) button register bytes.
+ *
+ * Reads all four button registers (0x70..0x73) at once and returns the raw
+ * values so a diagnostic can map physical buttons to registers. A raw bit of
+ * 0x00 in a byte means that button is currently pressed (the chip reports
+ * active-low).
+ *
+ * @param stick Joystick handle
+ * @param raw_out Pointer to a 4-byte array that receives the raw register
+ *                bytes (byte i corresponds to register BUTTON_1_REG + i).
+ * @return esp_err_t
+ */
+esp_err_t i2c_joystick_read_buttons_raw(i2c_joystick_handle_t *stick, uint8_t raw_out[4]);
+
+/**
+ * @brief Scan a range of registers on the joystick and copy the raw bytes.
+ *
+ * @param stick Joystick handle
+ * @param start_reg First register to read (inclusive)
+ * @param count Number of registers to read
+ * @param raw_out Pointer to a buffer that receives at least `count` bytes
+ * @return esp_err_t
+ */
+esp_err_t i2c_joystick_scan_registers(i2c_joystick_handle_t *stick, uint8_t start_reg,
+                                     uint8_t count, uint8_t *raw_out);
+
+/**
  * @brief Read all joystick data at once
  *
  * @param stick Joystick handle

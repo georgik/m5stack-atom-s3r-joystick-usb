@@ -129,7 +129,87 @@ static void display_get_dimensions(uint16_t *w, uint16_t *h)
     if (h) *h = 129;
 }
 
-// External rcore callback
+/*
+ * Screen rotation state. When s_screen_inverted is true the main screen is
+ * rotated 180 degrees so the AtomS3R can be played upside-down (USB connector
+ * pointing toward the player) — see wiki/handover.md. The rotation is done in
+ * the LCD controller via esp_lcd_panel_mirror(): the board's GC9107 is
+ * hardware-mirrored on X (MX, set at init), so a 180-degree rotation is MX +
+ * MY. The natural-order framebuffer produced by display_flush() is unchanged;
+ * the panel just writes it flipped on both axes.
+ */
+static bool s_screen_inverted = false;
+
+/*
+ * Brief backlight pulse so the user gets tactile confirmation of a rotation
+ * toggle. The panel boots at full brightness; a quick dim+restore is enough to
+ * notice without changing the steady-state brightness.
+ */
+static void flip_feedback(void)
+{
+    backlight_set_brightness(20);
+    vTaskDelay(pdMS_TO_TICKS(80));
+    backlight_on();
+}
+
+/*
+ * Toggle (or set) the 180-degree screen rotation. Called from the profile menu
+ * when the LEFT face button ("L") is pressed.
+ */
+static void set_screen_inverted(bool inverted)
+{
+    s_screen_inverted = inverted;
+    if (g_panel != NULL) {
+        /* The panel boots with MX set (board hardware mirror, MY clear) so it
+         * reads correctly in the normal (USB-down) orientation. When the board
+         * is rotated 180 degrees in-plane (USB toward the player) the display
+         * state must be the COMPLEMENT of that baseline: MX clear, MY set.
+         *
+         *   inverted=false -> MX=true,  MY=false -> normal (matches init)
+         *   inverted=true  -> MX=false, MY=true  -> 180 degrees, reads upright
+         *
+         * (Doing MX=true, MY=true as before leaves a leftover horizontal
+         *  mirror, i.e. backward letters — that is what we observed.) */
+        ESP_ERROR_CHECK(esp_lcd_panel_mirror(g_panel, !inverted, inverted));
+    }
+    ESP_LOGI(TAG, "Screen rotation: %s",
+             inverted ? "180 degrees (inverted)" : "normal");
+}
+
+/*
+ * Apply the 180-degree DEVICE rotation to a sampled input snapshot.
+ *
+ * When the main screen is rotated 180 degrees (s_screen_inverted) the board is
+ * played upside-down (USB connector toward the player). From the player's
+ * viewpoint this means:
+ *   - the physical LEFT stick now sits on the RIGHT (and the physical right on
+ *     the left)  ->  swap the two sticks;
+ *   - pushing a stick "up" now moves the cursor the other way on the rotated
+ *     screen  ->  invert both axes around the 2048 centre.
+ *
+ * It is applied to the sampled input BEFORE the state machine consumes it, so
+ * the profile menu, every HID/gamepad report and the snake game all see a
+ * natural, right-side-up layout while the display is flipped. With
+ * s_screen_inverted == false this is a no-op, so the normal orientation is
+ * untouched.
+ */
+static void apply_screen_flip(hid_input_state_t *s)
+{
+    if (!s_screen_inverted || s == NULL) {
+        return;
+    }
+    const int cx = 2048;  // stick centre
+    // Invert each axis around centre: 2*cx - raw  (== 4096 - raw).
+    int16_t j1x = (int16_t)(2 * cx - s->joy1_x);
+    int16_t j1y = (int16_t)(2 * cx - s->joy1_y);
+    int16_t j2x = (int16_t)(2 * cx - s->joy2_x);
+    int16_t j2y = (int16_t)(2 * cx - s->joy2_y);
+    // Swap the sticks: physical left (joy1) -> right output, and vice versa.
+    s->joy1_x = (uint16_t)j2x;
+    s->joy1_y = (uint16_t)j2y;
+    s->joy2_x = (uint16_t)j1x;
+    s->joy2_y = (uint16_t)j1y;
+}
 extern void raylib_esp_set_display_callbacks(
     void (*flush_fn)(const uint16_t *buf, uint16_t x, uint16_t y, uint16_t w, uint16_t h),
     void (*get_dim_fn)(uint16_t *w, uint16_t *h)
@@ -373,7 +453,25 @@ static void handle_menu(const hid_input_state_t *s, app_state_t *state,
         }
         s_menu_entry_done = true;
 
-        bool button_pressed = any_button_pressed(s);
+        /*
+         * Screen-flip toggle: the LEFT face button ("L") rotates the main
+         * screen 180 degrees. Edge-detected on RELEASE (button-up) so a single
+         * press+release toggles exactly once. We trigger on button-up rather
+         * than the press edge, so no frame-rate or debounce speeding-up is
+         * required — we simply wait for the user to let go, at which point the
+         * RAW register pattern has returned to all 1s. This button is kept OUT
+         * of the "confirm selection" set computed just below, so pressing it
+         * never also confirms a profile and leaves the menu.
+         */
+        static bool s_btn_left_last = false;
+        if (!s->btn_left && s_btn_left_last) {
+            set_screen_inverted(!s_screen_inverted);
+            flip_feedback();
+        }
+        s_btn_left_last = s->btn_left;
+
+        bool button_pressed = (s->btn_right || s->btn_left_stick ||
+                               s->btn_right_stick || s->gpio_pressed);
 
         if (profile_menu_handle_input(joy1_up, joy1_down, button_pressed)) {
             *profile = profile_menu_get_selected_info();
@@ -651,6 +749,11 @@ void raylib_task(void *pvParameter)
         hid_input_state_t input;
         gpio_input_read(&input);
 
+        // Rotate the sampled input with the display: when the board is flipped
+        // 180 degrees the sticks swap left<->right and their axes invert, so
+        // the menu, HID reports and snake all feel natural upside-down.
+        apply_screen_flip(&input);
+
         switch (state) {
         case APP_STATE_MENU:
             handle_menu(&input, &state, &profile);
@@ -697,6 +800,11 @@ void app_main(void)
     ESP_LOGI(TAG, "Starting AtomS3 USB Joystick");
 
     ESP_ERROR_CHECK(init_display());
+
+    // Default to the un-rotated (normal) orientation on boot so the device
+    // does not start flipped. The user toggles 180 degrees on the fly with the
+    // L face button (see set_screen_inverted / handle_menu).
+    set_screen_inverted(false);
 
     // Initialize MSC storage (FATfs) so the 'storage' partition is mounted.
     // This is the only function that mounts /storage, so the profile menu can

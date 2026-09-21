@@ -40,7 +40,7 @@ static i2c_joystick_handle_t s_stick;
 
 typedef struct {
     bool    stable;   // last reported (confirmed) button state
-    uint8_t count;    // consecutive reads of the current level
+    uint8_t count;    // consecutive reads differing from `stable`
 } button_debouncer_t;
 
 static button_debouncer_t s_btn_debounce[4];
@@ -48,14 +48,23 @@ static button_debouncer_t s_btn_debounce[4];
 static bool debounce_button(button_debouncer_t *b, bool raw)
 {
     if (raw == b->stable) {
+        // Reading matches the confirmed state -> cancel any pending change.
+        b->count = 0;
+    } else {
+        // Reading differs from the confirmed state -> count toward confirming
+        // the NEW level. (Old code incremented on the *matching* branch, so
+        // count could only ever grow while raw already equalled stable, which
+        // meant a fresh press/release could never accumulate to NEED and the
+        // reported state was frozen at its boot value. That is why the L
+        // button's press never reached btn_left even though the RAW register
+        // clearly went low.)
         if (b->count < 255) {
             b->count++;
         }
-    } else {
-        b->count = 1;
     }
     if (b->count >= BUTTON_DEBOUNCE_NEED) {
-        b->stable = raw;
+        b->stable = raw;   // confirm the new level
+        b->count = 0;
     }
     return b->stable;
 }

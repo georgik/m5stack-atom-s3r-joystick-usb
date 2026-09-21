@@ -155,3 +155,83 @@ esp_err_t i2c_joystick_read_all(i2c_joystick_handle_t *stick,
 
     return ESP_OK;
 }
+
+/**
+ * @brief Read the raw (un-debounced, un-inverted) button register bytes.
+ *
+ * Reads all four button registers (0x70..0x73) at once and returns the raw
+ * values so a diagnostic can map physical buttons to registers. A raw bit of
+ * 0x00 in a byte means that button is currently pressed (the chip reports
+ * active-low).
+ *
+ * @param stick Joystick handle
+ * @param raw_out Pointer to a 4-byte array that receives the raw register
+ *                bytes (byte i corresponds to register BUTTON_1_REG + i).
+ * @return esp_err_t
+ */
+esp_err_t i2c_joystick_read_buttons_raw(i2c_joystick_handle_t *stick, uint8_t raw_out[4]) {
+    if (!stick->initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (raw_out == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t ret;
+    uint8_t reg_addr = BUTTON_1_REG;  // 0x70
+
+    // Write register address
+    ret = i2c_master_transmit(stick->dev_handle, &reg_addr, 1, -1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to write button registers: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    // Read 4 button bytes
+    ret = i2c_master_receive(stick->dev_handle, raw_out, 4, -1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read button registers: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    return ESP_OK;
+}
+
+/**
+ * @brief Scan a range of registers on the joystick and copy the raw bytes.
+ *
+ * Used by the diagnostic to discover which registers carry the physical
+ * buttons (including any shoulder L/R buttons that live beyond 0x73).
+ *
+ * @param stick Joystick handle
+ * @param start_reg First register to read (inclusive)
+ * @param count Number of registers to read
+ * @param raw_out Pointer to a buffer that receives at least `count` bytes
+ * @return esp_err_t
+ */
+esp_err_t i2c_joystick_scan_registers(i2c_joystick_handle_t *stick, uint8_t start_reg,
+                                     uint8_t count, uint8_t *raw_out) {
+    if (!stick->initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (raw_out == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t ret;
+    uint8_t reg_addr = start_reg;
+
+    ret = i2c_master_transmit(stick->dev_handle, &reg_addr, 1, -1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "scan: failed to write start reg 0x%02X: %s", reg_addr, esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = i2c_master_receive(stick->dev_handle, raw_out, count, -1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "scan: failed to read registers: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    return ESP_OK;
+}
