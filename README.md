@@ -153,7 +153,7 @@ idf.py set-target esp32s3
 idf.py build
 ```
 
-Tested with ESP-IDF commit: [97d95853572ab74f476959](https://github.com/espressif/esp-idf/commit/97d95853572ab74f476959)
+Tested with ESP-IDF commit: [f0316c53dc](https://github.com/espressif/esp-idf/commit/f0316c53dc) (release/v6.1)
 
 ## Flash
 

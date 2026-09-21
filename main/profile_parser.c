@@ -53,7 +53,12 @@ static profile_type_t parse_profile_type(const char *type_str)
 // build (see wiki/working-version.md).
 static bool fs_read_file(const char *path, char *buf, size_t buf_size, size_t *out_len)
 {
-    FIL fil;
+    // FATfs f_open() does not zero the FIL object; it only sets fp->obj.fs and,
+    // with FF_USE_DYN_BUFFER, allocates fp->buf only when it is already NULL
+    // (see ESP-IDF commit a8b5b8d582 "fix a memory leak when FF_USE_DYN_BUFFER
+    // was enabled"). An uninitialized FIL.buf therefore leaks stack garbage that
+    // f_open/f_read/f_close treat as a valid buffer -> heap corruption. Zero it.
+    FIL fil = {0};
     FRESULT res = f_open(&fil, path, FA_READ);
     if (res != FR_OK) {
         ESP_LOGW(TAG, "fs_read_file: f_open(\"%s\") failed res=%d", path, (int)res);
@@ -187,7 +192,9 @@ int profile_parser_load_profiles(void)
     // POSIX VFS ("/storage/profiles"). In this build the /storage VFS mount
     // registered by tinyusb is not routable for POSIX opendir() (it returns
     // NULL), while the raw FATfs drive path works. See wiki/working-version.md.
-    FF_DIR dir;
+    // Zero the DIR: f_opendir() sets the fields it uses but does not clear the
+    // whole object, so a stale field from the stack could be read.
+    FF_DIR dir = {0};
     FRESULT res = f_opendir(&dir, "0:/profiles");
     if (res != FR_OK) {
         ESP_LOGE(TAG, "Failed to open 0:/profiles/ (f_opendir res=%d), using defaults", (int)res);
