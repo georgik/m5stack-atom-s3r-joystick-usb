@@ -80,15 +80,21 @@ static void display_flush(const uint16_t *buf, uint16_t x, uint16_t y, uint16_t 
     // lower third, because the last chunk's window end (y+129) exceeds the
     // 128-row panel. A single full-frame draw avoids that.
     //
-    // A full 130x129 framebuffer (~33 KB) may not fit in contiguous DMA SRAM, so
-    // try DMA first and fall back to plain SRAM (SPI DMA can read either).
+    // release/v6.1 reserves a 32 KB internal DMA pool; the full 130x129
+    // framebuffer (~33.5 KB) cannot fit in contiguous DMA-capable internal
+    // SRAM, so heap_caps_malloc(MALLOC_CAP_DMA) fails with ESP_ERR_NO_MEM and
+    // the SPI priv-TX-buffer path aborts. We therefore allocate the flush
+    // framebuffer in PSRAM. With psram_dma_direct=1 on the panel IO (see
+    // init_display), the SPI DMA path reads PSRAM directly and needs no
+    // internal scratch buffer at all, so the DMA error disappears. Fall back
+    // to plain SRAM only if PSRAM is unavailable.
     const size_t size = (size_t)h * w * sizeof(uint16_t);
-    uint16_t *fb = heap_caps_malloc(size, MALLOC_CAP_DMA);
+    uint16_t *fb = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
     if (!fb) {
-        fb = malloc(size);   // plain SRAM fallback: SPI DMA can read it
+        fb = malloc(size);   // plain SRAM fallback
     }
     if (!fb) {
-        ESP_LOGE(TAG, "Failed to allocate DMA flush buffer");
+        ESP_LOGE(TAG, "Failed to allocate flush buffer");
         return;
     }
 
@@ -173,6 +179,11 @@ static esp_err_t init_display(void)
         .lcd_param_bits = 8,
         .flags = {
             .dc_low_on_data = 0,
+            // release/v6.1: read the color (draw_bitmap) buffer directly from
+            // PSRAM instead of staging it into a small internal DMA buffer.
+            // This is what makes the PSRAM-allocated flush framebuffer usable
+            // and avoids the "Failed to allocate priv TX buffer" failure.
+            .psram_dma_direct = 1,
         },
     };
 
