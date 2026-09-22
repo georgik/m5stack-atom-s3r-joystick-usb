@@ -6,3 +6,4 @@ dependencies:
     version: '>=5.5.0'
   espressif/esp_lcd_gc9a01: '*'
   espressif/button: ^4.2.1
+  espressif/led_strip: ^3.0.3

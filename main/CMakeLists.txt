@@ -9,6 +9,7 @@ idf_component_register(SRCS "main.c"
                              "hid_reports.c"
                              "gpio_input.c"
                              "backlight.c"
+                             "joy_led.c"
                     INCLUDE_DIRS "."
                     REQUIRES georgik__raylib esp_driver_spi esp_lcd
                              espressif__esp_lcd_gc9a01 espressif__button

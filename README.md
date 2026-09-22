@@ -80,6 +80,22 @@ white-channel PWM value so the panel lights.
 | I2C bus | GPIO0 (SCL), GPIO45 (SDA) |
 | Device address | 0x30 (7-bit) |
 
+### LEDs
+
+Two WS2812C RGB LEDs sit near the L/R buttons on the Atom JoyStick sub-board.
+They are wired *directly* to the AtomS3R (ESP32-S3) on **GPIO6** and are
+controlled with the RMT peripheral through the ESP-IDF `led_strip` driver. The
+
+The LEDs run at a low brightness (`JOY_LED_BRIGHTNESS`) and show:
+
+- a short gradual **glow** at boot, then
+- a **rainbow** hue sweep while the profile-selection menu is open (driven by
+  the FreeRTOS tick counter, since raylib's `GetTime()` does not advance
+  reliably here).
+
+See `wiki/handover.md` ("Atom JoyStick sub-board LEDs (WS2812) — feasibility")
+for the full investigation.
+
 ### Input
 
 | Signal | GPIO / address |

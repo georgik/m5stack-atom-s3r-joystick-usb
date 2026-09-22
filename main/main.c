@@ -38,6 +38,7 @@
 #include "hid_reports.h"
 #include "ble_hid.h"
 #include "gpio_input.h"
+#include "joy_led.h"
 #include "profile_parser.h"
 #include "profile_menu.h"
 #include "snake_game.h"
@@ -775,6 +776,14 @@ void raylib_task(void *pvParameter)
             break;
         }
 
+        // WS2812 rainbow hue-wheel: animate only while browsing the profile
+        // menu. The sweep is driven internally by the FreeRTOS tick counter,
+        // so it rotates reliably regardless of raylib frame timing; once a mode
+        // is entered the LEDs simply stop updating and hold their last color.
+        if (profile_menu_is_active()) {
+            joy_led_update_rainbow();
+        }
+
         EndDrawing();
 
         // Frame pacing depends on the active mode.
@@ -819,6 +828,12 @@ void app_main(void)
     } else {
         ESP_LOGI(TAG, "MSC storage initialized: %s", msc_storage_get_mount_point());
     }
+
+    // Sub-board WS2812 LEDs: driven by ESP32 GPIO6 (not the STM32). Run a
+    // quick white blink so we can confirm GPIO6 actually drives the strip; the
+    // dim boot indicator follows, then the menu drives the rainbow.
+    joy_led_init();
+    joy_led_glow();   // smooth fade up to 30% brightness (boot indicator)
 
     xTaskCreatePinnedToCore(raylib_task, "raylib", RAYLIB_TASK_STACK_SIZE,
                             NULL, 5, NULL, 1);
